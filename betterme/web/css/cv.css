@@ -1,0 +1,24 @@
+/* Simple, readable CV stylesheet */
+html,body{height:100%;}
+body{
+  margin:0;
+  color:#111;
+  background:#fff;
+  font-family: Georgia, 'Times New Roman', serif;
+  line-height:1.5;
+}
+.site-header{max-width:900px;margin:18px auto 0;padding:0 16px}
+.site-header h1{font-size:28px;margin:0}
+.tagline{font-style:italic;color:#555;margin:6px 0}
+.container{max-width:900px;margin:16px auto;padding:0 16px}
+h2{font-size:18px;margin-top:18px;margin-bottom:8px}
+ul,ol{margin-left:1.2rem}
+blockquote{margin:8px 0;padding-left:12px;border-left:3px solid #eee;color:#333}
+.site-footer{max-width:900px;margin:18px auto;padding:0 16px;font-size:14px;color:#333}
+hr{border:0;border-top:1px solid #ccc;margin:12px 0}
+a{color:#1a0dab}
+
+@media (max-width:600px){
+  .site-header h1{font-size:20px}
+  .container{padding:0 12px}
+}

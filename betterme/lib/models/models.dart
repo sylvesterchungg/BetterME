@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/material.dart';
 
 class User {
   String id;
@@ -8,6 +9,7 @@ class User {
   int score; // Leaderboard score
   int waterIntake;
   int waterGoal;
+  String waterIntakeDate; // "YYYY-MM-DD" — resets intake when date changes
   List<String> friendsIds;
 
   User({
@@ -18,8 +20,14 @@ class User {
     this.score = 0,
     this.waterIntake = 0,
     this.waterGoal = 2500,
+    this.waterIntakeDate = '',
     this.friendsIds = const [],
   });
+
+  static String todayDateString() {
+    final now = DateTime.now();
+    return '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+  }
 
   // Convert to Map for Firestore
   Map<String, dynamic> toMap() {
@@ -31,20 +39,27 @@ class User {
       'score': score,
       'waterIntake': waterIntake,
       'waterGoal': waterGoal,
+      'waterIntakeDate': waterIntakeDate,
       'friendsIds': friendsIds,
     };
   }
 
   // Create from Firestore Document
   factory User.fromMap(Map<String, dynamic> map, String documentId) {
+    final storedDate = map['waterIntakeDate'] as String? ?? '';
+    final today = todayDateString();
+    // If the stored date is not today, treat intake as 0
+    final intake = storedDate == today ? (map['waterIntake'] as int? ?? 0) : 0;
+
     return User(
       id: documentId,
       username: map['username'] ?? '',
       avatarUrl: map['avatarUrl'] ?? '',
       streak: map['streak'] ?? 0,
       score: map['score'] ?? 0,
-      waterIntake: map['waterIntake'] ?? 0,
-      waterGoal: map['waterGoal'] ?? 2500,
+      waterIntake: intake,
+      waterGoal: map['waterGoal'] as int? ?? 2500,
+      waterIntakeDate: storedDate,
       friendsIds: List<String>.from(map['friendsIds'] ?? []),
     );
   }
@@ -130,6 +145,36 @@ class TaskCategory {
       iconKey: map['iconKey'] ?? 'list',
     );
   }
+
+  static IconData iconFromKey(String key) {
+    switch (key) {
+      case 'self_improvement':
+        return Icons.self_improvement;
+      case 'restaurant':
+        return Icons.restaurant;
+      case 'medication':
+        return Icons.medication;
+      case 'fitness_center':
+        return Icons.fitness_center;
+      case 'water_drop':
+        return Icons.water_drop;
+      case 'book':
+        return Icons.menu_book;
+      case 'bedtime':
+        return Icons.bedtime;
+      case 'favorite':
+        return Icons.favorite;
+      case 'work':
+        return Icons.work;
+      case 'school':
+        return Icons.school;
+      case 'schedule':
+        return Icons.schedule;
+      case 'list':
+      default:
+        return Icons.list_alt;
+    }
+  }
 }
 
 class LogEntry {
@@ -138,6 +183,8 @@ class LogEntry {
   DateTime date;
   double sleepHours;
   double moodScore; // 1.0 to 10.0
+  int sleepQuality; // 1–10; 0 = not set
+  bool hadNightmare;
   String notes;
   String trigger;
   List<String> emotions;
@@ -148,6 +195,8 @@ class LogEntry {
     required this.date,
     required this.sleepHours,
     required this.moodScore,
+    this.sleepQuality = 0,
+    this.hadNightmare = false,
     this.notes = '',
     this.trigger = '',
     this.emotions = const [],
@@ -159,6 +208,8 @@ class LogEntry {
       'date': Timestamp.fromDate(date),
       'sleepHours': sleepHours,
       'moodScore': moodScore,
+      'sleepQuality': sleepQuality,
+      'hadNightmare': hadNightmare,
       'notes': notes,
       'trigger': trigger,
       'emotions': emotions,
@@ -172,6 +223,8 @@ class LogEntry {
       date: (map['date'] as Timestamp?)?.toDate() ?? DateTime.now(),
       sleepHours: (map['sleepHours'] as num?)?.toDouble() ?? 0.0,
       moodScore: (map['moodScore'] as num?)?.toDouble() ?? 0.0,
+      sleepQuality: map['sleepQuality'] as int? ?? 0,
+      hadNightmare: map['hadNightmare'] as bool? ?? false,
       notes: map['notes'] ?? '',
       trigger: map['trigger'] ?? '',
       emotions: List<String>.from(map['emotions'] ?? []),
@@ -179,34 +232,3 @@ class LogEntry {
   }
 }
 
-class Friend {
-  String username;
-  String avatarUrl;
-  int streak;
-  String recentActivity;
-
-  Friend({
-    required this.username,
-    required this.avatarUrl,
-    required this.streak,
-    required this.recentActivity,
-  });
-
-  Map<String, dynamic> toMap() {
-    return {
-      'username': username,
-      'avatarUrl': avatarUrl,
-      'streak': streak,
-      'recentActivity': recentActivity,
-    };
-  }
-
-  factory Friend.fromMap(Map<String, dynamic> map) {
-    return Friend(
-      username: map['username'] ?? '',
-      avatarUrl: map['avatarUrl'] ?? '',
-      streak: map['streak'] ?? 0,
-      recentActivity: map['recentActivity'] ?? '',
-    );
-  }
-}

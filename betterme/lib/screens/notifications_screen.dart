@@ -68,7 +68,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
               isUnread: !_allRead,
               extraWidget: Row(
                 children: const [
-                  CircleAvatar(radius: 12, backgroundColor: Color(0xFFE2E8F0), child: Icon(Icons.person, size: 16, color: Colors.grey)),
+                  CircleAvatar(radius: 12, backgroundColor: AppTheme.borderDefault, child: Icon(Icons.person, size: 16, color: Colors.grey)),
                   SizedBox(width: 8),
                   Text('Community Cheer', style: TextStyle(fontSize: 12, color: AppTheme.secondary)),
                 ],
@@ -139,7 +139,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
+        border: Border.all(color: AppTheme.borderDefault),
         boxShadow: [
           BoxShadow(color: Colors.black.withValues(alpha: 0.02), blurRadius: 8, offset: const Offset(0, 2)),
         ],

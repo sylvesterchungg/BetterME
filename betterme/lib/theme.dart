@@ -19,6 +19,7 @@ class AppTheme {
   static const Color onSurfaceVariant = Color(0xFF464554);
   static const Color outline = Color(0xFF767586);
   static const Color outlineVariant = Color(0xFFC7C4D7);
+  static const Color borderDefault = Color(0xFFE2E8F0);
   static const Color error = Color(0xFFBA1A1A);
   static const Color primaryFixed = Color(0xFFE1E0FF);
   static const Color secondaryFixed = Color(0xFFFFD8E7);
@@ -49,7 +50,7 @@ class AppTheme {
       color: Colors.white,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(8), // 0.5rem from design system
-        side: const BorderSide(color: Color(0xFFE2E8F0), width: 1),
+        side: const BorderSide(color: borderDefault, width: 1),
       ),
       margin: const EdgeInsets.symmetric(vertical: 8, horizontal: 20), // 20px horizontal margin
     ),

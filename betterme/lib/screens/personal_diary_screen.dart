@@ -4,7 +4,7 @@ import 'package:intl/intl.dart';
 import '../providers/app_provider.dart';
 import '../models/models.dart';
 import '../theme.dart';
-import 'notifications_screen.dart';
+import '../widgets/app_page_header.dart';
 
 class PersonalDiaryScreen extends StatelessWidget {
   const PersonalDiaryScreen({super.key});
@@ -24,7 +24,7 @@ class PersonalDiaryScreen extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              _buildHeader(context, appProvider),
+              AppPageHeader(title: 'My Journal', user: appProvider.currentUser),
               const SizedBox(height: 16),
               const Text('Review your journey and celebrate your progress.', style: TextStyle(fontSize: 14, color: AppTheme.outline)),
               const SizedBox(height: 24),
@@ -48,58 +48,6 @@ class PersonalDiaryScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildHeader(BuildContext context, AppProvider provider) {
-    final user = provider.currentUser;
-    final now = DateTime.now();
-    final dateStr = DateFormat('MMMM d, yyyy').format(now);
-
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [
-        Row(
-          children: [
-            Container(
-              width: 44,
-              height: 44,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                border: Border.all(color: AppTheme.outlineVariant, width: 2),
-              ),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(22),
-                child: user?.avatarUrl != null && user!.avatarUrl.isNotEmpty
-                    ? Image.network(user.avatarUrl, fit: BoxFit.cover,
-                        errorBuilder: (_, _, _) => const Icon(Icons.person, color: AppTheme.outline))
-                    : const Icon(Icons.person, color: AppTheme.outline),
-              ),
-            ),
-            const SizedBox(width: 12),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text('My Journal', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
-                Text(dateStr, style: const TextStyle(fontSize: 12, color: AppTheme.outline)),
-              ],
-            ),
-          ],
-        ),
-        GestureDetector(
-          onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const NotificationsScreen())),
-          child: Container(
-            width: 40,
-            height: 40,
-            decoration: BoxDecoration(
-              color: AppTheme.surfaceContainerLow,
-              shape: BoxShape.circle,
-              border: Border.all(color: const Color(0xFFE2E8F0)),
-            ),
-            child: const Icon(Icons.notifications_outlined, color: AppTheme.onSurfaceVariant, size: 20),
-          ),
-        ),
-      ],
-    );
-  }
-
   Widget _buildStatsOverview(BuildContext context, int streak, int totalEntries) {
     return Row(
       children: [
@@ -110,7 +58,7 @@ class PersonalDiaryScreen extends StatelessWidget {
             decoration: BoxDecoration(
               color: AppTheme.primaryFixed.withValues(alpha: 0.3),
               borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: const Color(0xFFE2E8F0)),
+              border: Border.all(color: AppTheme.borderDefault),
             ),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -136,7 +84,7 @@ class PersonalDiaryScreen extends StatelessWidget {
             decoration: BoxDecoration(
               color: Colors.white,
               borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: const Color(0xFFE2E8F0)),
+              border: Border.all(color: AppTheme.borderDefault),
             ),
             child: Column(
               children: [
@@ -160,7 +108,7 @@ class PersonalDiaryScreen extends StatelessWidget {
             decoration: BoxDecoration(
               color: Colors.white,
               borderRadius: BorderRadius.circular(24),
-              border: Border.all(color: const Color(0xFFE2E8F0)),
+              border: Border.all(color: AppTheme.borderDefault),
             ),
             child: const Row(
               children: [
@@ -284,7 +232,7 @@ class PersonalDiaryScreen extends StatelessWidget {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
+        border: Border.all(color: AppTheme.borderDefault),
         boxShadow: [
           BoxShadow(color: Colors.black.withValues(alpha: 0.02), blurRadius: 8, offset: const Offset(0, 2)),
         ],

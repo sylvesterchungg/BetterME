@@ -42,16 +42,8 @@ class DatabaseService {
     });
   }
 
-  // Update streak
   Future<void> updateStreak(String userId, int newStreak) async {
-    final userDoc = _db.collection('users').doc(userId);
-    final docSnapshot = await userDoc.get();
-
-    if (docSnapshot.exists) {
-      await userDoc.update({
-        'streak': newStreak,
-      });
-    }
+    await _db.collection('users').doc(userId).update({'streak': newStreak});
   }
 
   // ==========================================
@@ -82,6 +74,11 @@ class DatabaseService {
     await _db.collection('tasks').doc(taskId).update({
       'isCompleted': isCompleted,
     });
+  }
+
+  // Update task fields
+  Future<void> updateTask(Task task) async {
+    await _db.collection('tasks').doc(task.id).update(task.toMap());
   }
 
   // Delete task
@@ -116,9 +113,14 @@ class DatabaseService {
     return docRef.id;
   }
 
-  // Update a mood & sleep log entry
+  // Update a mood & sleep log entry (full overwrite)
   Future<void> updateLogEntry(LogEntry entry) async {
     await _db.collection('logs').doc(entry.id).update(entry.toMap());
+  }
+
+  // Patch specific fields on an existing log document (used to update mood or sleep independently)
+  Future<void> patchLogEntry(String logId, Map<String, dynamic> fields) async {
+    await _db.collection('logs').doc(logId).update(fields);
   }
 
   // Stream logs for progressive reports and charts
@@ -141,30 +143,22 @@ class DatabaseService {
   // WATER INTAKE OPERATIONS
   // ==========================================
 
-  Future<void> updateWaterIntake(String userId, int amount) async {
-    final userDoc = _db.collection('users').doc(userId);
-    final docSnapshot = await userDoc.get();
+  Future<void> updateWaterIntake(String userId, int amount, String dateStr) async {
+    await _db.collection('users').doc(userId).update({
+      'waterIntake': FieldValue.increment(amount),
+      'waterIntakeDate': dateStr,
+    });
+  }
 
-    if (docSnapshot.exists) {
-      final currentWater = docSnapshot.data()?['waterIntake'] ?? 0;
-      int newWater = currentWater + amount;
-      if (newWater < 0) newWater = 0;
-      
-      await userDoc.update({
-        'waterIntake': newWater,
-      });
-    }
+  Future<void> setWaterIntake(String userId, int amount, String dateStr) async {
+    await _db.collection('users').doc(userId).update({
+      'waterIntake': amount.clamp(0, 99999),
+      'waterIntakeDate': dateStr,
+    });
   }
 
   Future<void> updateWaterGoal(String userId, int goal) async {
-    final userDoc = _db.collection('users').doc(userId);
-    final docSnapshot = await userDoc.get();
-
-    if (docSnapshot.exists) {
-      await userDoc.update({
-        'waterGoal': goal,
-      });
-    }
+    await _db.collection('users').doc(userId).update({'waterGoal': goal});
   }
 
   // ==========================================

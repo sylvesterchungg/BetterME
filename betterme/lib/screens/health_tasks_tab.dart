@@ -4,7 +4,7 @@ import 'package:intl/intl.dart';
 import '../providers/app_provider.dart';
 import '../models/models.dart';
 import '../theme.dart';
-import 'notifications_screen.dart';
+import '../widgets/app_page_header.dart';
 
 class _TaskCategoryUi {
   final String name;
@@ -22,35 +22,6 @@ class _TaskCategoryUi {
   });
 }
 
-IconData _taskIconForKey(String key) {
-  switch (key) {
-    case 'self_improvement':
-      return Icons.self_improvement;
-    case 'restaurant':
-      return Icons.restaurant;
-    case 'medication':
-      return Icons.medication;
-    case 'fitness_center':
-      return Icons.fitness_center;
-    case 'water_drop':
-      return Icons.water_drop;
-    case 'book':
-      return Icons.menu_book;
-    case 'bedtime':
-      return Icons.bedtime;
-    case 'favorite':
-      return Icons.favorite;
-    case 'work':
-      return Icons.work;
-    case 'school':
-      return Icons.school;
-    case 'schedule':
-      return Icons.schedule;
-    case 'list':
-    default:
-      return Icons.list_alt;
-  }
-}
 
 const List<_TaskCategoryUi> _builtInTaskCategories = [
   _TaskCategoryUi(
@@ -114,9 +85,19 @@ class _HealthTasksTabState extends State<HealthTasksTab> {
       useSafeArea: true,
       backgroundColor: Colors.transparent,
       barrierColor: Colors.black.withValues(alpha: 0.25),
-      builder: (context) {
-        return AddTaskBottomSheet(provider: provider);
-      },
+      builder: (context) => AddTaskBottomSheet(provider: provider),
+    );
+  }
+
+  void _showEditTaskBottomSheet(BuildContext context, AppProvider provider, Task task) {
+    showModalBottomSheet(
+      context: context,
+      useRootNavigator: true,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Colors.transparent,
+      barrierColor: Colors.black.withValues(alpha: 0.25),
+      builder: (context) => AddTaskBottomSheet(provider: provider, initialTask: task),
     );
   }
 
@@ -187,7 +168,7 @@ class _HealthTasksTabState extends State<HealthTasksTab> {
           return _TaskCategoryUi(
             name: category.name,
             iconKey: category.iconKey,
-            icon: _taskIconForKey(category.iconKey),
+            icon: TaskCategory.iconFromKey(category.iconKey),
             backgroundColor: AppTheme.surfaceContainerLow,
             iconColor: AppTheme.primary,
           );
@@ -201,7 +182,7 @@ class _HealthTasksTabState extends State<HealthTasksTab> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  _buildHeader(context, provider),
+                  AppPageHeader(title: 'Health Tasks', user: provider.currentUser),
                   const SizedBox(height: 24),
                   _buildDailyProgress(context, provider),
                   const SizedBox(height: 24),
@@ -242,75 +223,6 @@ class _HealthTasksTabState extends State<HealthTasksTab> {
     );
   }
 
-  Widget _buildHeader(BuildContext context, AppProvider provider) {
-    final user = provider.currentUser;
-    final now = DateTime.now();
-    final dateStr = DateFormat('MMMM d, yyyy').format(now);
-
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [
-        Row(
-          children: [
-            Container(
-              width: 44,
-              height: 44,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                border: Border.all(color: AppTheme.outlineVariant, width: 2),
-              ),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(22),
-                child: user?.avatarUrl != null && user!.avatarUrl.isNotEmpty
-                    ? Image.network(
-                        user.avatarUrl,
-                        fit: BoxFit.cover,
-                        errorBuilder: (_, _, _) =>
-                            const Icon(Icons.person, color: AppTheme.outline),
-                      )
-                    : const Icon(Icons.person, color: AppTheme.outline),
-              ),
-            ),
-            const SizedBox(width: 12),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'Health Tasks',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
-                ),
-                Text(
-                  dateStr,
-                  style: const TextStyle(fontSize: 12, color: AppTheme.outline),
-                ),
-              ],
-            ),
-          ],
-        ),
-        GestureDetector(
-          onTap: () => Navigator.push(
-            context,
-            MaterialPageRoute(builder: (_) => const NotificationsScreen()),
-          ),
-          child: Container(
-            width: 40,
-            height: 40,
-            decoration: BoxDecoration(
-              color: AppTheme.surfaceContainerLow,
-              shape: BoxShape.circle,
-              border: Border.all(color: const Color(0xFFE2E8F0)),
-            ),
-            child: const Icon(
-              Icons.notifications_outlined,
-              color: AppTheme.onSurfaceVariant,
-              size: 20,
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
   Widget _buildDailyProgress(BuildContext context, AppProvider provider) {
     final total = provider.tasks.length;
     final completed = provider.tasks.where((t) => t.isCompleted).length;
@@ -321,7 +233,7 @@ class _HealthTasksTabState extends State<HealthTasksTab> {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
+        border: Border.all(color: AppTheme.borderDefault),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withValues(alpha: 0.05),
@@ -396,7 +308,7 @@ class _HealthTasksTabState extends State<HealthTasksTab> {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
+        border: Border.all(color: AppTheme.borderDefault),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -467,7 +379,7 @@ class _HealthTasksTabState extends State<HealthTasksTab> {
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: const Color(0xFFE2E8F0)),
+          border: Border.all(color: AppTheme.borderDefault),
         ),
         child: Row(
           children: [
@@ -532,13 +444,19 @@ class _HealthTasksTabState extends State<HealthTasksTab> {
                 ],
               ),
             ),
-            GestureDetector(
-              onTap: () => provider.deleteTask(task.id),
-              child: const Icon(
-                Icons.delete_outline,
-                size: 18,
-                color: AppTheme.error,
-              ),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                GestureDetector(
+                  onTap: () => _showEditTaskBottomSheet(context, provider, task),
+                  child: const Icon(Icons.edit_outlined, size: 18, color: AppTheme.primary),
+                ),
+                const SizedBox(width: 12),
+                GestureDetector(
+                  onTap: () => provider.deleteTask(task.id),
+                  child: const Icon(Icons.delete_outline, size: 18, color: AppTheme.error),
+                ),
+              ],
             ),
           ],
         ),
@@ -554,7 +472,7 @@ class _HealthTasksTabState extends State<HealthTasksTab> {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
+        border: Border.all(color: AppTheme.borderDefault),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.center,
@@ -717,7 +635,7 @@ class _HealthTasksTabState extends State<HealthTasksTab> {
           decoration: BoxDecoration(
             color: Colors.white,
             borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: const Color(0xFFE2E8F0)),
+            border: Border.all(color: AppTheme.borderDefault),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -920,8 +838,9 @@ class _HealthTasksTabState extends State<HealthTasksTab> {
 
 class AddTaskBottomSheet extends StatefulWidget {
   final AppProvider provider;
+  final Task? initialTask;
 
-  const AddTaskBottomSheet({super.key, required this.provider});
+  const AddTaskBottomSheet({super.key, required this.provider, this.initialTask});
 
   @override
   State<AddTaskBottomSheet> createState() => _AddTaskBottomSheetState();
@@ -965,12 +884,35 @@ class _AddTaskBottomSheetState extends State<AddTaskBottomSheet> {
         return _TaskCategoryUi(
           name: category.name,
           iconKey: category.iconKey,
-          icon: _taskIconForKey(category.iconKey),
+          icon: TaskCategory.iconFromKey(category.iconKey),
           backgroundColor: AppTheme.surfaceContainerLow,
           iconColor: AppTheme.primary,
         );
       }),
     ];
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    final task = widget.initialTask;
+    if (task != null) {
+      _titleController.text = task.title;
+      _selectedCategory = task.category;
+      _selectedCategoryIconKey = task.categoryIconKey ?? 'list';
+      _selectedDate = task.dueDate ?? DateTime.now();
+      _reminderEnabled = task.reminderTime != null;
+      if (task.reminderTime != null) {
+        final parts = task.reminderTime!.split(':');
+        if (parts.length == 2) {
+          _reminderTime = TimeOfDay(
+            hour: int.tryParse(parts[0]) ?? 9,
+            minute: int.tryParse(parts[1]) ?? 0,
+          );
+        }
+      }
+      _repeatInterval = task.repeatInterval;
+    }
   }
 
   @override
@@ -982,18 +924,33 @@ class _AddTaskBottomSheetState extends State<AddTaskBottomSheet> {
   Future<void> _saveTask() async {
     if (_titleController.text.trim().isEmpty) return;
 
-    String? reminderStr = _reminderEnabled
+    final reminderStr = _reminderEnabled
         ? '${_reminderTime.hour.toString().padLeft(2, '0')}:${_reminderTime.minute.toString().padLeft(2, '0')}'
         : null;
 
-    await widget.provider.addTask(
-      _titleController.text.trim(),
-      category: _selectedCategory,
-      categoryIconKey: _selectedCategoryIconKey,
-      dueDate: _selectedDate,
-      reminderTime: reminderStr,
-      repeatInterval: _repeatInterval,
-    );
+    if (widget.initialTask != null) {
+      final updated = Task(
+        id: widget.initialTask!.id,
+        userId: widget.initialTask!.userId,
+        title: _titleController.text.trim(),
+        isCompleted: widget.initialTask!.isCompleted,
+        category: _selectedCategory,
+        categoryIconKey: _selectedCategoryIconKey,
+        dueDate: _selectedDate,
+        reminderTime: reminderStr,
+        repeatInterval: _repeatInterval,
+      );
+      await widget.provider.updateTask(updated);
+    } else {
+      await widget.provider.addTask(
+        _titleController.text.trim(),
+        category: _selectedCategory,
+        categoryIconKey: _selectedCategoryIconKey,
+        dueDate: _selectedDate,
+        reminderTime: reminderStr,
+        repeatInterval: _repeatInterval,
+      );
+    }
 
     if (mounted) Navigator.pop(context);
   }
@@ -1052,7 +1009,7 @@ class _AddTaskBottomSheetState extends State<AddTaskBottomSheet> {
                             ),
                           ),
                           child: Icon(
-                            _taskIconForKey(key),
+                            TaskCategory.iconFromKey(key),
                             color: isSelected
                                 ? Colors.white
                                 : AppTheme.onSurfaceVariant,
@@ -1174,9 +1131,9 @@ class _AddTaskBottomSheetState extends State<AddTaskBottomSheet> {
                   borderRadius: BorderRadius.circular(12),
                 ),
               ),
-              child: const Text(
-                'Create Task',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+              child: Text(
+                widget.initialTask != null ? 'Update Task' : 'Create Task',
+                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
               ),
             ),
           ),
@@ -1214,9 +1171,9 @@ class _AddTaskBottomSheetState extends State<AddTaskBottomSheet> {
               ),
             ),
           ),
-          const Text(
-            'Add New Task',
-            style: TextStyle(
+          Text(
+            widget.initialTask != null ? 'Edit Task' : 'Add New Task',
+            style: const TextStyle(
               fontSize: 18,
               fontWeight: FontWeight.w700,
               color: AppTheme.primary,

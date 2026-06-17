@@ -89,7 +89,7 @@ class DashboardTab extends StatelessWidget {
             decoration: BoxDecoration(
               color: AppTheme.surfaceContainerLow,
               shape: BoxShape.circle,
-              border: Border.all(color: const Color(0xFFE2E8F0)),
+              border: Border.all(color: AppTheme.borderDefault),
             ),
             child: const Icon(Icons.notifications_outlined, color: AppTheme.onSurfaceVariant, size: 20),
           ),
@@ -125,7 +125,7 @@ class DashboardTab extends StatelessWidget {
           decoration: BoxDecoration(
             color: Colors.white,
             borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: const Color(0xFFE2E8F0)),
+            border: Border.all(color: AppTheme.borderDefault),
           ),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -220,6 +220,8 @@ class DashboardTab extends StatelessWidget {
       todaySleep = todayLogs.first.sleepHours;
     }
 
+    final todayMood = todayLogs.isNotEmpty ? todayLogs.first.moodScore : null;
+
     final steps = provider.currentSteps;
     final sleepHours = todaySleep.floor();
     final sleepMins = ((todaySleep - sleepHours) * 60).round();
@@ -240,7 +242,7 @@ class DashboardTab extends StatelessWidget {
                 decoration: BoxDecoration(
                   color: Colors.white,
                   borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: const Color(0xFFE2E8F0)),
+                  border: Border.all(color: AppTheme.borderDefault),
                 ),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -288,6 +290,13 @@ class DashboardTab extends StatelessWidget {
             Expanded(child: _buildSummaryCard(Icons.directions_walk, AppTheme.secondary, 'Steps', '$steps')),
             const SizedBox(width: 16),
             Expanded(child: _buildSummaryCard(Icons.bedtime, AppTheme.tertiary, 'Sleep', '${sleepHours}h ${sleepMins}m')),
+            const SizedBox(width: 16),
+            Expanded(child: _buildSummaryCard(
+              Icons.mood,
+              AppTheme.primary,
+              'Mood',
+              todayMood != null ? todayMood.toStringAsFixed(1) : '—',
+            )),
           ],
         ),
       ],
@@ -300,7 +309,7 @@ class DashboardTab extends StatelessWidget {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
+        border: Border.all(color: AppTheme.borderDefault),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -476,7 +485,7 @@ class DashboardTab extends StatelessWidget {
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: const Color(0xFFE2E8F0)),
+          border: Border.all(color: AppTheme.borderDefault),
         ),
         child: Column(
           children: [
@@ -503,7 +512,7 @@ class DashboardTab extends StatelessWidget {
         decoration: BoxDecoration(
           color: AppTheme.surfaceContainerLow,
           borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: const Color(0xFFE2E8F0)),
+          border: Border.all(color: AppTheme.borderDefault),
         ),
         child: Row(
           children: [

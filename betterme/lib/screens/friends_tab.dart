@@ -1,10 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:intl/intl.dart';
 import '../providers/app_provider.dart';
 import '../theme.dart';
 import '../models/models.dart';
-import 'notifications_screen.dart';
+import '../widgets/app_page_header.dart';
 
 class FriendsTab extends StatefulWidget {
   const FriendsTab({super.key});
@@ -53,7 +52,18 @@ class _FriendsTabState extends State<FriendsTab> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _buildHeader(context, provider),
+                AppPageHeader(
+                  title: 'Community',
+                  user: provider.currentUser,
+                  leadingWidget: Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: AppTheme.primaryContainer,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Icon(Icons.bubble_chart, color: Colors.white, size: 20),
+                  ),
+                ),
                 const SizedBox(height: 24),
                 _buildSearchAndAdd(provider),
                 const SizedBox(height: 24),
@@ -71,72 +81,6 @@ class _FriendsTabState extends State<FriendsTab> {
     );
   }
 
-  Widget _buildHeader(BuildContext context, AppProvider provider) {
-    final now = DateTime.now();
-    final dateStr = DateFormat('MMMM d, yyyy').format(now);
-
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [
-        Row(
-          children: [
-            // Brand icon
-            Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: AppTheme.primaryContainer,
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: const Icon(
-                Icons.bubble_chart,
-                color: Colors.white,
-                size: 20,
-              ),
-            ),
-            const SizedBox(width: 12),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'Community',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
-                ),
-                Text(
-                  dateStr,
-                  style: const TextStyle(fontSize: 12, color: AppTheme.outline),
-                ),
-              ],
-            ),
-          ],
-        ),
-        Row(
-          children: [
-            GestureDetector(
-              onTap: () => Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const NotificationsScreen()),
-              ),
-              child: Container(
-                width: 40,
-                height: 40,
-                decoration: BoxDecoration(
-                  color: AppTheme.surfaceContainerLow,
-                  shape: BoxShape.circle,
-                  border: Border.all(color: const Color(0xFFE2E8F0)),
-                ),
-                child: const Icon(
-                  Icons.notifications_outlined,
-                  color: AppTheme.onSurfaceVariant,
-                  size: 20,
-                ),
-              ),
-            ),
-          ],
-        ),
-      ],
-    );
-  }
-
   Widget _buildSearchAndAdd(AppProvider provider) {
     return Row(
       children: [
@@ -146,7 +90,7 @@ class _FriendsTabState extends State<FriendsTab> {
             decoration: BoxDecoration(
               color: Colors.white,
               borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: const Color(0xFFE2E8F0)),
+              border: Border.all(color: AppTheme.borderDefault),
             ),
             child: Row(
               children: [
@@ -337,7 +281,7 @@ class _FriendsTabState extends State<FriendsTab> {
               child: Container(
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: isAdd ? Colors.white : const Color(0xFFE2E8F0),
+                  color: isAdd ? Colors.white : AppTheme.borderDefault,
                   border: Border.all(color: Colors.white, width: 2),
                   image: (!isAdd && avatarUrl != null)
                       ? DecorationImage(
@@ -390,7 +334,7 @@ class _FriendsTabState extends State<FriendsTab> {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
+        border: Border.all(color: AppTheme.borderDefault),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withValues(alpha: 0.05),
@@ -487,7 +431,7 @@ class _FriendsTabState extends State<FriendsTab> {
           const SizedBox(width: 12),
           CircleAvatar(
             radius: 20,
-            backgroundColor: const Color(0xFFE2E8F0),
+            backgroundColor: AppTheme.borderDefault,
             backgroundImage: NetworkImage(avatarUrl),
           ),
           const SizedBox(width: 12),
@@ -532,7 +476,7 @@ class _FriendsTabState extends State<FriendsTab> {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
+        border: Border.all(color: AppTheme.borderDefault),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withValues(alpha: 0.05),
@@ -702,7 +646,7 @@ class _FriendsTabState extends State<FriendsTab> {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
+        border: Border.all(color: AppTheme.borderDefault),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,

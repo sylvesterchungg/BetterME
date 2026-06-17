@@ -27,7 +27,9 @@ class _DailyLogTabState extends State<DailyLogTab> {
   };
 
   // Sleep State
-  double _sleepHours = 7.0; // Slider value 0.0 to 24.0
+  double _sleepHours = 7.0;
+  int _sleepQuality = 0; // 0 = not yet rated; 1–10
+  bool _hadNightmare = false;
 
 
   void _toggleActivity(String activity) {
@@ -42,95 +44,69 @@ class _DailyLogTabState extends State<DailyLogTab> {
 
   Future<void> _saveLog() async {
     final provider = context.read<AppProvider>();
-
-    // Check if a log for today already exists
     final now = DateTime.now();
-    LogEntry? existingLog;
+
+    LogEntry? todayLog;
     try {
-      existingLog = provider.logs.firstWhere((log) {
-        return log.date.year == now.year &&
-               log.date.month == now.month &&
-               log.date.day == now.day;
-      });
-    } catch (e) {
-      existingLog = null;
+      todayLog = provider.logs.firstWhere((log) =>
+          log.date.year == now.year &&
+          log.date.month == now.month &&
+          log.date.day == now.day);
+    } catch (_) {
+      todayLog = null;
     }
 
-    if (existingLog != null) {
-      if (!mounted) return;
-      showDialog(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          title: const Text('Log Already Exists'),
-          content: const Text('You have already logged data for today. Would you like to update the existing log or add a new separate entry?'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('Cancel'),
-            ),
-            TextButton(
-              onPressed: () {
-                Navigator.pop(ctx);
-                _executeSaveLog(provider, false, null);
-              },
-              child: const Text('Add New'),
-            ),
-            ElevatedButton(
-              onPressed: () {
-                Navigator.pop(ctx);
-                _executeSaveLog(provider, true, existingLog);
-              },
-              child: const Text('Update'),
-            ),
-          ],
-        ),
-      );
-    } else {
-      await _executeSaveLog(provider, false, null);
-    }
-  }
-
-  Future<void> _executeSaveLog(AppProvider provider, bool isUpdate, LogEntry? existingLog) async {
-    final notes = 'Logged via ${_logMode == 'mood' ? 'Mood' : 'Sleep'} tab';
-
-    final activeSymptoms = _symptoms.entries
-        .where((e) => e.value)
-        .map((e) => e.key)
-        .toList();
-
-    // Only overwrite the dimension belonging to the current mode; preserve the
-    // other dimension (and its associated fields) from the existing log so that
-    // logging sleep doesn't wipe out a previously recorded mood, and vice-versa.
-    final double finalMoodScore =
-        _logMode == 'mood' ? _moodScore : (existingLog?.moodScore ?? 0.0);
-    final double finalSleepHours =
-        _logMode == 'sleep' ? _sleepHours : (existingLog?.sleepHours ?? 0.0);
-
-    // emotions/trigger are mood-only inputs; keep prior values when logging sleep
-    final List<String> finalEmotions =
-        _logMode == 'mood' ? activeSymptoms : (existingLog?.emotions ?? const []);
-    final String finalTrigger = _logMode == 'mood'
-        ? _selectedActivities.join(', ')
-        : (existingLog?.trigger ?? '');
-
-    final entry = LogEntry(
-      id: existingLog?.id ?? '',
-      date: DateTime.now(),
-      sleepHours: finalSleepHours,
-      moodScore: finalMoodScore,
-      emotions: finalEmotions,
-      notes: notes,
-      trigger: finalTrigger,
-    );
-
-    if (isUpdate) {
-      await provider.updateLog(entry);
-    } else {
-      await provider.addLog(entry);
-    }
-
+    await _executeSaveLog(provider, todayLog);
     _showSuccessSnackbar();
   }
+
+  Future<void> _executeSaveLog(AppProvider provider, LogEntry? todayLog) async {
+    if (_logMode == 'mood') {
+      final activeSymptoms = _symptoms.entries
+          .where((e) => e.value)
+          .map((e) => e.key)
+          .toList();
+
+      if (todayLog != null) {
+        // Patch only mood fields — sleep data in the same document is untouched
+        await provider.patchLog(todayLog.id, {
+          'moodScore': _moodScore.clamp(1.0, 10.0),
+          'emotions': activeSymptoms,
+          'trigger': _selectedActivities.join(', '),
+        });
+      } else {
+        await provider.addLog(LogEntry(
+          id: '',
+          date: now,
+          moodScore: _moodScore,
+          sleepHours: 0.0,
+          sleepQuality: 0,
+          emotions: activeSymptoms,
+          trigger: _selectedActivities.join(', '),
+        ));
+      }
+    } else {
+      if (todayLog != null) {
+        // Patch only sleep fields — mood data in the same document is untouched
+        await provider.patchLog(todayLog.id, {
+          'sleepHours': _sleepHours.clamp(0.0, 24.0),
+          'sleepQuality': _sleepQuality.clamp(0, 10),
+          'hadNightmare': _hadNightmare,
+        });
+      } else {
+        await provider.addLog(LogEntry(
+          id: '',
+          date: now,
+          moodScore: 0.0,
+          sleepHours: _sleepHours,
+          sleepQuality: _sleepQuality,
+          hadNightmare: _hadNightmare,
+        ));
+      }
+    }
+  }
+
+  DateTime get now => DateTime.now();
 
   void _showSuccessSnackbar() {
     if (mounted) {
@@ -152,6 +128,8 @@ class _DailyLogTabState extends State<DailyLogTab> {
       } else if (_logMode == 'sleep') {
         setState(() {
           _sleepHours = 7.0;
+          _sleepQuality = 0;
+          _hadNightmare = false;
         });
       }
     }
@@ -206,7 +184,7 @@ class _DailyLogTabState extends State<DailyLogTab> {
   Widget _buildModeToggle() {
     return Container(
       decoration: BoxDecoration(
-        color: const Color(0xFFE2E8F0),
+        color: AppTheme.borderDefault,
         borderRadius: BorderRadius.circular(12),
       ),
       padding: const EdgeInsets.all(4),
@@ -419,16 +397,16 @@ class _DailyLogTabState extends State<DailyLogTab> {
           decoration: BoxDecoration(
             color: Colors.white,
             borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: const Color(0xFFE2E8F0)),
+            border: Border.all(color: AppTheme.borderDefault),
           ),
           child: Column(
             children: [
               _buildSymptomRow('Headache', Icons.headset_off),
-              const Divider(height: 1, color: Color(0xFFE2E8F0)),
+              const Divider(height: 1, color: AppTheme.borderDefault),
               _buildSymptomRow('Fatigue', Icons.bolt),
-              const Divider(height: 1, color: Color(0xFFE2E8F0)),
+              const Divider(height: 1, color: AppTheme.borderDefault),
               _buildSymptomRow('Anxiety', Icons.psychology),
-              const Divider(height: 1, color: Color(0xFFE2E8F0)),
+              const Divider(height: 1, color: AppTheme.borderDefault),
               _buildSymptomRow('Pain', Icons.warning),
             ],
           ),
@@ -472,7 +450,7 @@ class _DailyLogTabState extends State<DailyLogTab> {
         const Text('Sleep Log', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w600)),
         const SizedBox(height: 8),
         const Text('How many hours did you sleep?', style: TextStyle(fontSize: 14, color: AppTheme.onSurfaceVariant)),
-        const SizedBox(height: 48),
+        const SizedBox(height: 24),
 
         Center(
           child: Column(
@@ -482,7 +460,7 @@ class _DailyLogTabState extends State<DailyLogTab> {
               Text(
                 '${_sleepHours.toStringAsFixed(1)} hrs',
                 style: const TextStyle(
-                  fontSize: 48,
+                  fontSize: 32,
                   fontWeight: FontWeight.bold,
                   color: AppTheme.primary,
                 ),
@@ -490,20 +468,23 @@ class _DailyLogTabState extends State<DailyLogTab> {
             ],
           ),
         ),
-        const SizedBox(height: 48),
-
-        Slider(
-          value: _sleepHours,
-          min: 0.0,
-          max: 12.0,
-          divisions: 48, // 30 min intervals
-          activeColor: AppTheme.primary,
-          inactiveColor: AppTheme.surfaceContainer,
-          onChanged: (value) {
-            setState(() {
-              _sleepHours = value;
-            });
-          },
+        const SizedBox(height: 24),
+        
+        SliderTheme(
+          data: SliderTheme.of(context).copyWith(
+            trackHeight: 4,
+            thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 8),
+            overlayShape: const RoundSliderOverlayShape(overlayRadius: 16),
+          ),
+          child: Slider(
+            value: _sleepHours,
+            min: 0.0,
+            max: 12.0,
+            divisions: 48,
+            activeColor: AppTheme.primary,
+            inactiveColor: AppTheme.surfaceContainer,
+            onChanged: (value) => setState(() => _sleepHours = value),
+          ),
         ),
         const Padding(
           padding: EdgeInsets.symmetric(horizontal: 16),
@@ -516,7 +497,13 @@ class _DailyLogTabState extends State<DailyLogTab> {
           ),
         ),
 
-        const SizedBox(height: 48),
+        
+
+        const SizedBox(height: 32),
+        _buildSleepQualitySection(),
+        const SizedBox(height: 32),
+        _buildNightmareSection(),
+        const SizedBox(height: 32),
         Container(
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
@@ -541,7 +528,108 @@ class _DailyLogTabState extends State<DailyLogTab> {
             ],
           ),
         ),
+        const SizedBox(height: 32),
       ],
+    );
+  }
+
+  Widget _buildSleepQualitySection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text('Sleep Quality', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+        const SizedBox(height: 4),
+        const Text('How restful was your sleep?', style: TextStyle(fontSize: 14, color: AppTheme.onSurfaceVariant)),
+        const SizedBox(height: 16),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+          children: List.generate(5, (i) {
+            final starValue = (i + 1) * 2; // maps 1–5 stars → 2,4,6,8,10
+            final filled = _sleepQuality >= starValue;
+            return GestureDetector(
+              onTap: () => setState(() => _sleepQuality = starValue),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 150),
+                padding: const EdgeInsets.all(8),
+                child: Icon(
+                  filled ? Icons.star_rounded : Icons.star_outline_rounded,
+                  size: 40,
+                  color: filled ? const Color(0xFFF59E0B) : AppTheme.outlineVariant,
+                ),
+              ),
+            );
+          }),
+        ),
+        if (_sleepQuality > 0) ...[
+          const SizedBox(height: 8),
+          Center(
+            child: Text(
+              _sleepQualityLabel(_sleepQuality),
+              style: const TextStyle(fontSize: 13, color: AppTheme.onSurfaceVariant),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  String _sleepQualityLabel(int quality) {
+    if (quality <= 2) return 'Very Poor';
+    if (quality <= 4) return 'Poor';
+    if (quality <= 6) return 'Fair';
+    if (quality <= 8) return 'Good';
+    return 'Excellent';
+  }
+
+  Widget _buildNightmareSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text('Dream Experience', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+        const SizedBox(height: 4),
+        const Text('Did you experience any nightmares?', style: TextStyle(fontSize: 14, color: AppTheme.onSurfaceVariant)),
+        const SizedBox(height: 16),
+        Row(
+          children: [
+            Expanded(child: _buildDreamChoice(false, Icons.nightlight_round, 'No Nightmares', const Color(0xFF6366F1))),
+            const SizedBox(width: 12),
+            Expanded(child: _buildDreamChoice(true, Icons.cloud, 'Had Nightmares', AppTheme.error)),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildDreamChoice(bool value, IconData icon, String label, Color color) {
+    final isSelected = _hadNightmare == value;
+    return GestureDetector(
+      onTap: () => setState(() => _hadNightmare = value),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        padding: const EdgeInsets.symmetric(vertical: 16),
+        decoration: BoxDecoration(
+          color: isSelected ? color.withValues(alpha: 0.1) : Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: isSelected ? color : AppTheme.outlineVariant,
+            width: isSelected ? 2 : 1,
+          ),
+        ),
+        child: Column(
+          children: [
+            Icon(icon, color: isSelected ? color : AppTheme.outline, size: 28),
+            const SizedBox(height: 8),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: isSelected ? color : AppTheme.onSurfaceVariant,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 

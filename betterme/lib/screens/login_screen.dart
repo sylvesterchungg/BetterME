@@ -94,6 +94,27 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
     }
   }
 
+  void _sendPasswordReset() async {
+    final email = _emailController.text.trim();
+    if (email.isEmpty) {
+      _showError('Enter your email address first.');
+      return;
+    }
+    setState(() => _isLoading = true);
+    try {
+      await context.read<AppProvider>().sendPasswordResetEmail(email);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Password reset email sent. Check your inbox.')),
+        );
+      }
+    } catch (e) {
+      _showError('Could not send reset email. Check the address and try again.');
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
   void _showError(String message) {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
       content: Text(message),
@@ -262,9 +283,7 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
               _buildFieldLabel('Password'),
               if (_isLogin)
                 GestureDetector(
-                  onTap: () {
-                    // Could add forgot password functionality
-                  },
+                  onTap: _sendPasswordReset,
                   child: const Text(
                     'Forgot Password?',
                     style: TextStyle(

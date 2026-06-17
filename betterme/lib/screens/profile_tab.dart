@@ -155,6 +155,8 @@ class _ProfileTabState extends State<ProfileTab> {
             child: Column(
               children: [
                 _buildProfileHeader(context, provider),
+                const SizedBox(height: 24),
+                _buildStatsRow(provider),
                 const SizedBox(height: 32),
                 _buildSettingsGrid(context, provider),
                 const SizedBox(height: 32),
@@ -192,7 +194,7 @@ class _ProfileTabState extends State<ProfileTab> {
                   ],
                 ),
                 child: CircleAvatar(
-                  backgroundColor: const Color(0xFFE2E8F0),
+                  backgroundColor: AppTheme.borderDefault,
                   backgroundImage: NetworkImage(user.avatarUrl),
                 ),
               ),
@@ -219,7 +221,7 @@ class _ProfileTabState extends State<ProfileTab> {
         ),
         const SizedBox(height: 4),
         Text(
-          'Premium Member • ${user.streak} Day Streak',
+          ' ${user.streak} Day Streak',
           style: const TextStyle(fontSize: 14, color: AppTheme.outline),
         ),
         const SizedBox(height: 16),
@@ -242,6 +244,42 @@ class _ProfileTabState extends State<ProfileTab> {
     );
   }
 
+  Widget _buildStatsRow(AppProvider provider) {
+    final avgMood = provider.averageMood;
+    final avgSleep = provider.averageSleep;
+    final completion = provider.taskCompletionRate;
+
+    return Row(
+      children: [
+        Expanded(child: _buildStatCard('Avg Mood', avgMood > 0 ? avgMood.toStringAsFixed(1) : '—', Icons.mood, AppTheme.primary)),
+        const SizedBox(width: 12),
+        Expanded(child: _buildStatCard('Avg Sleep', avgSleep > 0 ? '${avgSleep.toStringAsFixed(1)}h' : '—', Icons.bedtime, AppTheme.tertiary)),
+        const SizedBox(width: 12),
+        Expanded(child: _buildStatCard('Tasks Done', '${(completion * 100).toInt()}%', Icons.check_circle_outline, AppTheme.secondary)),
+      ],
+    );
+  }
+
+  Widget _buildStatCard(String label, String value, IconData icon, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 8),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppTheme.borderDefault),
+      ),
+      child: Column(
+        children: [
+          Icon(icon, color: color, size: 22),
+          const SizedBox(height: 8),
+          Text(value, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 2),
+          Text(label, style: const TextStyle(fontSize: 11, color: AppTheme.outline)),
+        ],
+      ),
+    );
+  }
+
   Widget _buildSettingsGrid(BuildContext context, AppProvider provider) {
     return Column(
       children: [
@@ -249,14 +287,16 @@ class _ProfileTabState extends State<ProfileTab> {
         const SizedBox(height: 16),
         _buildNotificationsSection(context),
         const SizedBox(height: 16),
-        _buildPrivacySection(),
-        const SizedBox(height: 16),
         _buildSupportSection(),
       ],
     );
   }
 
   Widget _buildAccountSection(AppProvider provider) {
+    final isEmailUser = auth.FirebaseAuth.instance.currentUser?.providerData
+            .any((p) => p.providerId == 'password') ??
+        false;
+
     return _buildCard(
       title: 'Account',
       icon: Icons.account_circle,
@@ -266,12 +306,12 @@ class _ProfileTabState extends State<ProfileTab> {
           Icons.chevron_right,
           onTap: () => _showEditUsernameDialog(provider),
         ),
-        _buildListTile(
-          'Password & Security',
-          Icons.chevron_right,
-          onTap: _showChangePasswordDialog,
-        ),
-        _buildListTile('Subscription Plans', Icons.chevron_right),
+        if (isEmailUser)
+          _buildListTile(
+            'Password & Security',
+            Icons.chevron_right,
+            onTap: _showChangePasswordDialog,
+          ),
       ],
     );
   }
@@ -322,16 +362,6 @@ class _ProfileTabState extends State<ProfileTab> {
     );
   }
 
-  Widget _buildPrivacySection() {
-    return _buildCard(
-      title: 'Privacy',
-      icon: Icons.lock,
-      children: [
-        _buildListTile('Data Sharing', Icons.chevron_right),
-        _buildListTile('App Lock', Icons.chevron_right),
-      ],
-    );
-  }
 
   Widget _buildSupportSection() {
     return _buildCard(
@@ -354,7 +384,7 @@ class _ProfileTabState extends State<ProfileTab> {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
+        border: Border.all(color: AppTheme.borderDefault),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withValues(alpha: 0.05),

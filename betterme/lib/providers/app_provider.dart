@@ -157,6 +157,10 @@ class AppProvider with ChangeNotifier {
     }
   }
 
+  Future<void> sendPasswordResetEmail(String email) async {
+    await _auth.sendPasswordResetEmail(email: email);
+  }
+
   Future<void> loginWithGoogle() async {
     final GoogleSignInAccount? googleUser = await _googleSignIn.signIn();
     if (googleUser == null) return; // User canceled
@@ -265,6 +269,11 @@ class AppProvider with ChangeNotifier {
     }
   }
 
+  Future<void> updateTask(Task task) async {
+    if (task.id.isEmpty || task.title.trim().isEmpty) return;
+    await _dbService.updateTask(task);
+  }
+
   Future<void> deleteTask(String id) async {
     await _dbService.deleteTask(id);
   }
@@ -299,16 +308,24 @@ class AppProvider with ChangeNotifier {
       id: '',
       userId: currentUser!.id,
       date: entry.date,
-      sleepHours: entry.sleepHours,
-      moodScore: entry.moodScore,
+      sleepHours: entry.sleepHours.clamp(0.0, 24.0),
+      moodScore: entry.moodScore.clamp(1.0, 10.0),
+      sleepQuality: entry.sleepQuality.clamp(0, 10),
+      hadNightmare: entry.hadNightmare,
       notes: entry.notes,
       trigger: entry.trigger,
       emotions: entry.emotions,
     );
 
     await _dbService.addLogEntry(databaseEntry);
-    
+
     // Streak check
+    await checkAndUpdateStreak();
+  }
+
+  Future<void> patchLog(String logId, Map<String, dynamic> fields) async {
+    if (currentUser == null || logId.isEmpty) return;
+    await _dbService.patchLogEntry(logId, fields);
     await checkAndUpdateStreak();
   }
 
@@ -318,16 +335,18 @@ class AppProvider with ChangeNotifier {
     final databaseEntry = LogEntry(
       id: entry.id,
       userId: currentUser!.id,
-      date: entry.date, // keep original date
-      sleepHours: entry.sleepHours,
-      moodScore: entry.moodScore,
+      date: entry.date,
+      sleepHours: entry.sleepHours.clamp(0.0, 24.0),
+      moodScore: entry.moodScore.clamp(1.0, 10.0),
+      sleepQuality: entry.sleepQuality.clamp(0, 10),
+      hadNightmare: entry.hadNightmare,
       notes: entry.notes,
       trigger: entry.trigger,
       emotions: entry.emotions,
     );
 
     await _dbService.updateLogEntry(databaseEntry);
-    
+
     // Streak check
     await checkAndUpdateStreak();
   }
@@ -337,8 +356,13 @@ class AppProvider with ChangeNotifier {
   // ==========================================
 
   Future<void> addWaterIntake(int amount) async {
-    if (currentUser != null) {
-      await _dbService.updateWaterIntake(currentUser!.id, amount);
+    if (currentUser == null) return;
+    final today = User.todayDateString();
+    if (currentUser!.waterIntakeDate != today) {
+      // New day — reset to this amount (clamped to 0 for undo on a fresh day)
+      await _dbService.setWaterIntake(currentUser!.id, amount.clamp(0, 99999), today);
+    } else {
+      await _dbService.updateWaterIntake(currentUser!.id, amount, today);
     }
   }
 

@@ -23,6 +23,21 @@ class _TaskCategoryUi {
 }
 
 
+const List<String> _kCategoryIconKeys = [
+  'self_improvement',
+  'restaurant',
+  'medication',
+  'fitness_center',
+  'water_drop',
+  'book',
+  'bedtime',
+  'favorite',
+  'work',
+  'school',
+  'schedule',
+  'list',
+];
+
 const List<_TaskCategoryUi> _builtInTaskCategories = [
   _TaskCategoryUi(
     name: 'Mindfulness',
@@ -110,9 +125,11 @@ class _HealthTasksTabState extends State<HealthTasksTab> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text('Added ${amount}ml of water'),
+        duration: const Duration(seconds: 3),
         action: SnackBarAction(
           label: 'Undo',
           onPressed: () {
+            ScaffoldMessenger.of(context).hideCurrentSnackBar();
             provider.addWaterIntake(-amount);
           },
         ),
@@ -174,6 +191,11 @@ class _HealthTasksTabState extends State<HealthTasksTab> {
           );
         }).toList();
 
+        final allCategories = [
+          ..._builtInTaskCategories,
+          ...customCategorySections,
+        ];
+
         return Scaffold(
           backgroundColor: Colors.transparent,
           body: SafeArea(
@@ -185,26 +207,15 @@ class _HealthTasksTabState extends State<HealthTasksTab> {
                   AppPageHeader(title: 'Health Tasks', user: provider.currentUser),
                   const SizedBox(height: 24),
                   _buildDailyProgress(context, provider),
-                  const SizedBox(height: 24),
-                  _buildCategorySection(
-                    context,
-                    provider,
-                    _builtInTaskCategories[0],
-                  ),
+                  const SizedBox(height: 16),
+                  _buildAllTasksSection(context, provider, allCategories),
                   const SizedBox(height: 16),
                   _buildHydrationCategory(context, provider),
                   const SizedBox(height: 16),
                   _buildPhysicalActivityCategory(context, provider),
-                  ...[
-                    ..._builtInTaskCategories.skip(1),
-                    ...customCategorySections,
-                  ].expand((category) sync* {
-                    yield const SizedBox(height: 16);
-                    yield _buildCategorySection(context, provider, category);
-                  }),
                   const SizedBox(height: 24),
                   _buildAtmosphericBanner(context),
-                  const SizedBox(height: 80), // Space for FAB
+                  const SizedBox(height: 80),
                 ],
               ),
             ),
@@ -288,20 +299,13 @@ class _HealthTasksTabState extends State<HealthTasksTab> {
     );
   }
 
-  Widget _buildCategorySection(
+  Widget _buildAllTasksSection(
     BuildContext context,
     AppProvider provider,
-    _TaskCategoryUi category,
+    List<_TaskCategoryUi> allCategories,
   ) {
-    final categoryTasks = provider.tasks
-        .where((t) => t.category == category.name)
-        .toList();
-    if (categoryTasks.isEmpty)
-      return const SizedBox.shrink(); // Don't show if empty
-
-    final completed = categoryTasks.where((t) => t.isCompleted).length;
-    final total = categoryTasks.length;
-    final progress = total == 0 ? 0.0 : completed / total;
+    final tasks = provider.tasks;
+    final categoryMap = {for (final c in allCategories) c.name: c};
 
     return Container(
       padding: const EdgeInsets.all(16),
@@ -310,74 +314,46 @@ class _HealthTasksTabState extends State<HealthTasksTab> {
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: AppTheme.borderDefault),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                width: 40,
-                height: 40,
-                decoration: BoxDecoration(
-                  color: category.backgroundColor,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Icon(category.icon, color: category.iconColor),
-              ),
-              const SizedBox(width: 12),
-              Text(
-                category.name,
-                style: const TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w600,
+      child: tasks.isEmpty
+          ? const Padding(
+              padding: EdgeInsets.symmetric(vertical: 24),
+              child: Center(
+                child: Column(
+                  children: [
+                    Icon(Icons.task_alt, size: 40, color: AppTheme.outlineVariant),
+                    SizedBox(height: 8),
+                    Text(
+                      'No tasks yet. Tap + to add one.',
+                      style: TextStyle(fontSize: 14, color: AppTheme.outline),
+                    ),
+                  ],
                 ),
               ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          ...categoryTasks.map((t) => _buildTaskItem(context, provider, t)),
-          const SizedBox(height: 16),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              const Text(
-                'Progress',
-                style: TextStyle(
-                  fontSize: 12,
-                  color: AppTheme.onSurfaceVariant,
-                ),
-              ),
-              Text(
-                '$completed/$total',
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                  color: category.iconColor,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 4),
-          LinearProgressIndicator(
-            value: progress,
-            backgroundColor: AppTheme.surfaceContainer,
-            color: category.iconColor,
-            minHeight: 6,
-            borderRadius: BorderRadius.circular(6),
-          ),
-        ],
-      ),
+            )
+          : Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Your Tasks', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+                const SizedBox(height: 16),
+                ...tasks.map((t) => _buildTaskItem(context, provider, t, categoryMap[t.category])),
+              ],
+            ),
     );
   }
 
-  Widget _buildTaskItem(BuildContext context, AppProvider provider, Task task) {
+  Widget _buildTaskItem(
+    BuildContext context,
+    AppProvider provider,
+    Task task,
+    _TaskCategoryUi? catUi,
+  ) {
     return GestureDetector(
       onTap: () => provider.toggleTask(task.id),
       child: Container(
         padding: const EdgeInsets.all(12),
         margin: const EdgeInsets.only(bottom: 8),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: task.isCompleted ? AppTheme.surfaceContainerLow : Colors.white,
           borderRadius: BorderRadius.circular(8),
           border: Border.all(color: AppTheme.borderDefault),
         ),
@@ -390,9 +366,7 @@ class _HealthTasksTabState extends State<HealthTasksTab> {
                 color: task.isCompleted ? AppTheme.primary : Colors.white,
                 borderRadius: BorderRadius.circular(4),
                 border: Border.all(
-                  color: task.isCompleted
-                      ? AppTheme.primary
-                      : AppTheme.outlineVariant,
+                  color: task.isCompleted ? AppTheme.primary : AppTheme.outlineVariant,
                   width: 2,
                 ),
               ),
@@ -410,40 +384,32 @@ class _HealthTasksTabState extends State<HealthTasksTab> {
                     style: TextStyle(
                       fontSize: 14,
                       fontWeight: FontWeight.w500,
-                      decoration: task.isCompleted
-                          ? TextDecoration.lineThrough
-                          : null,
-                      color: task.isCompleted
-                          ? AppTheme.outline
-                          : AppTheme.onSurface,
+                      decoration: task.isCompleted ? TextDecoration.lineThrough : null,
+                      color: task.isCompleted ? AppTheme.outline : AppTheme.onSurface,
                     ),
                   ),
-                  if (task.dueDate != null || task.reminderTime != null)
-                    Wrap(
-                      spacing: 10,
-                      runSpacing: 2,
-                      children: [
-                        if (task.dueDate != null)
-                          Text(
-                            'Due: ${DateFormat('MMM d, yyyy').format(task.dueDate!)}',
-                            style: const TextStyle(
-                              fontSize: 12,
-                              color: AppTheme.outline,
-                            ),
-                          ),
-                        if (task.reminderTime != null)
-                          Text(
-                            'Reminder: ${task.reminderTime}',
-                            style: const TextStyle(
-                              fontSize: 12,
-                              color: AppTheme.outline,
-                            ),
-                          ),
-                      ],
-                    ),
+                  const SizedBox(height: 4),
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 4,
+                    children: [
+                      if (catUi != null) _buildCategoryBadge(catUi),
+                      if (task.dueDate != null)
+                        Text(
+                          'Due: ${DateFormat('MMM d').format(task.dueDate!)}',
+                          style: const TextStyle(fontSize: 11, color: AppTheme.outline),
+                        ),
+                      if (task.reminderTime != null)
+                        Text(
+                          'Reminder: ${task.reminderTime}',
+                          style: const TextStyle(fontSize: 11, color: AppTheme.outline),
+                        ),
+                    ],
+                  ),
                 ],
               ),
             ),
+            const SizedBox(width: 8),
             Row(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -460,6 +426,27 @@ class _HealthTasksTabState extends State<HealthTasksTab> {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildCategoryBadge(_TaskCategoryUi catUi) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: catUi.backgroundColor,
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(catUi.icon, size: 10, color: catUi.iconColor),
+          const SizedBox(width: 3),
+          Text(
+            catUi.name,
+            style: TextStyle(fontSize: 11, color: catUi.iconColor, fontWeight: FontWeight.w600),
+          ),
+        ],
       ),
     );
   }
@@ -625,151 +612,93 @@ class _HealthTasksTabState extends State<HealthTasksTab> {
     AppProvider provider,
   ) {
     final steps = provider.currentSteps;
-    final stepGoal = 10000;
+    const stepGoal = 10000;
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: AppTheme.borderDefault),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppTheme.borderDefault),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Row(
-                    children: [
-                      const Icon(
-                        Icons.directions_run,
-                        color: AppTheme.tertiary,
-                      ),
-                      const SizedBox(width: 8),
-                      const Text(
-                        'Physical Activity',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ],
-                  ),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 4,
-                    ),
-                    decoration: BoxDecoration(
-                      color: AppTheme.tertiaryFixed,
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    child: Text(
-                      'Goal: ${stepGoal ~/ 1000}k steps',
-                      style: const TextStyle(
-                        fontSize: 12,
-                        color: AppTheme.onTertiaryFixed,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.baseline,
-                textBaseline: TextBaseline.alphabetic,
-                children: [
-                  Text(
-                    NumberFormat('#,###').format(steps),
-                    style: const TextStyle(
-                      fontSize: 32,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
+                  const Icon(Icons.directions_run, color: AppTheme.tertiary),
                   const SizedBox(width: 8),
                   const Text(
-                    'steps today',
-                    style: TextStyle(
-                      fontSize: 14,
-                      color: AppTheme.onSurfaceVariant,
-                    ),
+                    'Physical Activity',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
                   ),
                 ],
               ),
-              const SizedBox(height: 16),
-              // Dummy graph
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  _buildGraphBar(40, false),
-                  _buildGraphBar(60, false),
-                  _buildGraphBar(80, false),
-                  _buildGraphBar(50, false),
-                  _buildGraphBar(30, false),
-                  _buildGraphBar(70, false),
-                  _buildGraphBar(64, true), // Today
-                ],
-              ),
-              const SizedBox(height: 8),
-              const Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    'M',
-                    style: TextStyle(fontSize: 10, color: AppTheme.outline),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                decoration: BoxDecoration(
+                  color: AppTheme.tertiaryFixed,
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Text(
+                  'Goal: ${stepGoal ~/ 1000}k steps',
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: AppTheme.onTertiaryFixed,
+                    fontWeight: FontWeight.w600,
                   ),
-                  Text(
-                    'T',
-                    style: TextStyle(fontSize: 10, color: AppTheme.outline),
-                  ),
-                  Text(
-                    'W',
-                    style: TextStyle(fontSize: 10, color: AppTheme.outline),
-                  ),
-                  Text(
-                    'T',
-                    style: TextStyle(fontSize: 10, color: AppTheme.outline),
-                  ),
-                  Text(
-                    'F',
-                    style: TextStyle(fontSize: 10, color: AppTheme.outline),
-                  ),
-                  Text(
-                    'S',
-                    style: TextStyle(fontSize: 10, color: AppTheme.outline),
-                  ),
-                  Text(
-                    'S',
-                    style: TextStyle(
-                      fontSize: 10,
-                      color: AppTheme.primary,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ],
+                ),
               ),
             ],
           ),
-        ),
-        const SizedBox(height: 16),
-        _buildCategorySection(
-          context,
-          provider,
-          const _TaskCategoryUi(
-            name: 'Physical Activity',
-            iconKey: 'fitness_center',
-            icon: Icons.directions_run,
-            backgroundColor: AppTheme.tertiaryFixed,
-            iconColor: AppTheme.tertiary,
+          const SizedBox(height: 16),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.baseline,
+            textBaseline: TextBaseline.alphabetic,
+            children: [
+              Text(
+                NumberFormat('#,###').format(steps),
+                style: const TextStyle(fontSize: 32, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(width: 8),
+              const Text(
+                'steps today',
+                style: TextStyle(fontSize: 14, color: AppTheme.onSurfaceVariant),
+              ),
+            ],
           ),
-        ),
-      ],
+          const SizedBox(height: 16),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              _buildGraphBar(40, false),
+              _buildGraphBar(60, false),
+              _buildGraphBar(80, false),
+              _buildGraphBar(50, false),
+              _buildGraphBar(30, false),
+              _buildGraphBar(70, false),
+              _buildGraphBar(64, true),
+            ],
+          ),
+          const SizedBox(height: 8),
+          const Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text('M', style: TextStyle(fontSize: 10, color: AppTheme.outline)),
+              Text('T', style: TextStyle(fontSize: 10, color: AppTheme.outline)),
+              Text('W', style: TextStyle(fontSize: 10, color: AppTheme.outline)),
+              Text('T', style: TextStyle(fontSize: 10, color: AppTheme.outline)),
+              Text('F', style: TextStyle(fontSize: 10, color: AppTheme.outline)),
+              Text('S', style: TextStyle(fontSize: 10, color: AppTheme.outline)),
+              Text('S', style: TextStyle(fontSize: 10, color: AppTheme.primary, fontWeight: FontWeight.bold)),
+            ],
+          ),
+        ],
+      ),
     );
   }
 
@@ -862,20 +791,6 @@ class _AddTaskBottomSheetState extends State<AddTaskBottomSheet> {
     'Monthly',
     'Custom',
   ];
-  static const List<String> _newCategoryIconKeys = [
-    'self_improvement',
-    'restaurant',
-    'medication',
-    'fitness_center',
-    'water_drop',
-    'book',
-    'bedtime',
-    'favorite',
-    'work',
-    'school',
-    'schedule',
-    'list',
-  ];
 
   List<_TaskCategoryUi> get _categoryOptions {
     return [
@@ -956,95 +871,11 @@ class _AddTaskBottomSheetState extends State<AddTaskBottomSheet> {
   }
 
   Future<void> _showNewCategoryDialog() async {
-    final controller = TextEditingController();
-    String selectedIconKey = 'list';
-
     final created = await showDialog<TaskCategory>(
       context: context,
       useRootNavigator: true,
-      builder: (dialogContext) {
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            return AlertDialog(
-              title: const Text('New Category'),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  TextField(
-                    controller: controller,
-                    autofocus: true,
-                    textCapitalization: TextCapitalization.words,
-                    decoration: const InputDecoration(
-                      hintText: 'Category name',
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  const Text(
-                    'Icon',
-                    style: TextStyle(fontWeight: FontWeight.w600),
-                  ),
-                  const SizedBox(height: 10),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: _newCategoryIconKeys.map((key) {
-                      final isSelected = selectedIconKey == key;
-                      return InkWell(
-                        borderRadius: BorderRadius.circular(10),
-                        onTap: () =>
-                            setDialogState(() => selectedIconKey = key),
-                        child: Container(
-                          width: 42,
-                          height: 42,
-                          decoration: BoxDecoration(
-                            color: isSelected
-                                ? AppTheme.primary
-                                : AppTheme.surfaceContainerLow,
-                            borderRadius: BorderRadius.circular(10),
-                            border: Border.all(
-                              color: isSelected
-                                  ? AppTheme.primary
-                                  : AppTheme.outlineVariant,
-                            ),
-                          ),
-                          child: Icon(
-                            TaskCategory.iconFromKey(key),
-                            color: isSelected
-                                ? Colors.white
-                                : AppTheme.onSurfaceVariant,
-                          ),
-                        ),
-                      );
-                    }).toList(),
-                  ),
-                ],
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(dialogContext),
-                  child: const Text('Cancel'),
-                ),
-                ElevatedButton(
-                  onPressed: () async {
-                    final category = await widget.provider.addTaskCategory(
-                      controller.text,
-                      selectedIconKey,
-                    );
-                    if (category != null && dialogContext.mounted) {
-                      Navigator.pop(dialogContext, category);
-                    }
-                  },
-                  child: const Text('Save'),
-                ),
-              ],
-            );
-          },
-        );
-      },
+      builder: (_) => _NewCategoryDialog(provider: widget.provider),
     );
-
-    controller.dispose();
 
     if (!mounted || created == null) return;
 
@@ -1320,7 +1151,7 @@ class _AddTaskBottomSheetState extends State<AddTaskBottomSheet> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text(
-              'DUE DATE',
+              'DATE',
               style: TextStyle(
                 fontSize: 13,
                 color: AppTheme.onSurfaceVariant,
@@ -1469,6 +1300,102 @@ class _AddTaskBottomSheetState extends State<AddTaskBottomSheet> {
           ],
         ),
       ),
+    );
+  }
+}
+
+// Proper StatefulWidget for the new-category dialog.
+// Using StatefulBuilder caused '_dependents.isEmpty' assertion failures because
+// the Firestore stream fires notifyListeners() while the dialog context was
+// still being torn down. A real StatefulWidget has a clean dispose lifecycle.
+class _NewCategoryDialog extends StatefulWidget {
+  final AppProvider provider;
+  const _NewCategoryDialog({required this.provider});
+
+  @override
+  State<_NewCategoryDialog> createState() => _NewCategoryDialogState();
+}
+
+class _NewCategoryDialogState extends State<_NewCategoryDialog> {
+  final _controller = TextEditingController();
+  String _selectedIconKey = 'list';
+  bool _saving = false;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    final name = _controller.text.trim();
+    if (name.isEmpty || _saving) return;
+    setState(() => _saving = true);
+
+    final category = await widget.provider.addTaskCategory(name, _selectedIconKey);
+
+    if (mounted) {
+      Navigator.pop(context, category);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('New Category'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          TextField(
+            controller: _controller,
+            autofocus: true,
+            textCapitalization: TextCapitalization.words,
+            decoration: const InputDecoration(hintText: 'Category name'),
+          ),
+          const SizedBox(height: 16),
+          const Text('Icon', style: TextStyle(fontWeight: FontWeight.w600)),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: _kCategoryIconKeys.map((key) {
+              final isSelected = _selectedIconKey == key;
+              return InkWell(
+                borderRadius: BorderRadius.circular(10),
+                onTap: () => setState(() => _selectedIconKey = key),
+                child: Container(
+                  width: 42,
+                  height: 42,
+                  decoration: BoxDecoration(
+                    color: isSelected ? AppTheme.primary : AppTheme.surfaceContainerLow,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                      color: isSelected ? AppTheme.primary : AppTheme.outlineVariant,
+                    ),
+                  ),
+                  child: Icon(
+                    TaskCategory.iconFromKey(key),
+                    color: isSelected ? Colors.white : AppTheme.onSurfaceVariant,
+                  ),
+                ),
+              );
+            }).toList(),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: _saving ? null : () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        ElevatedButton(
+          onPressed: _saving ? null : _save,
+          child: _saving
+              ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+              : const Text('Save'),
+        ),
+      ],
     );
   }
 }

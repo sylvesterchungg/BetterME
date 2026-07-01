@@ -11,6 +11,10 @@ class User {
   int waterGoal;
   String waterIntakeDate; // "YYYY-MM-DD" — resets intake when date changes
   List<String> friendsIds;
+  // Denormalized "today's mood" so friends can see it without reading private
+  // logs. Only meaningful when moodDate == today (see fromMap).
+  double moodScore; // 0.0 = no mood logged today
+  String moodDate; // "YYYY-MM-DD"
 
   User({
     required this.id,
@@ -22,6 +26,8 @@ class User {
     this.waterGoal = 2500,
     this.waterIntakeDate = '',
     this.friendsIds = const [],
+    this.moodScore = 0.0,
+    this.moodDate = '',
   });
 
   static String todayDateString() {
@@ -41,6 +47,8 @@ class User {
       'waterGoal': waterGoal,
       'waterIntakeDate': waterIntakeDate,
       'friendsIds': friendsIds,
+      'moodScore': moodScore,
+      'moodDate': moodDate,
     };
   }
 
@@ -50,6 +58,12 @@ class User {
     final today = todayDateString();
     // If the stored date is not today, treat intake as 0
     final intake = storedDate == today ? (map['waterIntake'] as int? ?? 0) : 0;
+
+    // Mood only counts for today; a stale mood from a previous day reads as 0.
+    final storedMoodDate = map['moodDate'] as String? ?? '';
+    final mood = storedMoodDate == today
+        ? ((map['moodScore'] as num?)?.toDouble() ?? 0.0)
+        : 0.0;
 
     return User(
       id: documentId,
@@ -61,6 +75,8 @@ class User {
       waterGoal: map['waterGoal'] as int? ?? 2500,
       waterIntakeDate: storedDate,
       friendsIds: List<String>.from(map['friendsIds'] ?? []),
+      moodScore: mood,
+      moodDate: storedMoodDate,
     );
   }
 }
@@ -177,6 +193,80 @@ class TaskCategory {
   }
 }
 
+class FriendRequest {
+  String id;
+  String fromId;
+  String fromUsername;
+  String fromAvatarUrl;
+  String toId;
+  String status; // 'pending' | 'accepted' | 'rejected'
+
+  FriendRequest({
+    this.id = '',
+    required this.fromId,
+    required this.fromUsername,
+    required this.fromAvatarUrl,
+    required this.toId,
+    this.status = 'pending',
+  });
+
+  Map<String, dynamic> toMap() => {
+    'fromId': fromId,
+    'fromUsername': fromUsername,
+    'fromAvatarUrl': fromAvatarUrl,
+    'toId': toId,
+    'status': status,
+  };
+
+  factory FriendRequest.fromMap(Map<String, dynamic> map, String documentId) {
+    return FriendRequest(
+      id: documentId,
+      fromId: map['fromId'] ?? '',
+      fromUsername: map['fromUsername'] ?? '',
+      fromAvatarUrl: map['fromAvatarUrl'] ?? '',
+      toId: map['toId'] ?? '',
+      status: map['status'] ?? 'pending',
+    );
+  }
+}
+
+class ProductivityRecord {
+  String id;
+  String userId;
+  String date; // "YYYY-MM-DD"
+  double completionRate; // 0.0–1.0
+  int completedTasks;
+  int totalTasks;
+
+  ProductivityRecord({
+    this.id = '',
+    this.userId = '',
+    required this.date,
+    required this.completionRate,
+    required this.completedTasks,
+    required this.totalTasks,
+  });
+
+  Map<String, dynamic> toMap() => {
+    'userId': userId,
+    'date': date,
+    'completionRate': completionRate,
+    'completedTasks': completedTasks,
+    'totalTasks': totalTasks,
+  };
+
+  factory ProductivityRecord.fromMap(Map<String, dynamic> map, String documentId) {
+    return ProductivityRecord(
+      id: documentId,
+      userId: map['userId'] ?? '',
+      date: map['date'] ?? '',
+      completionRate: (map['completionRate'] as num?)?.toDouble() ?? 0.0,
+      completedTasks: map['completedTasks'] as int? ?? 0,
+      totalTasks: map['totalTasks'] as int? ?? 0,
+    );
+  }
+}
+
 class LogEntry {
   String id;
   String userId;
@@ -188,6 +278,9 @@ class LogEntry {
   String notes;
   String trigger;
   List<String> emotions;
+  // Non-zero only when the day's entry was updated (stores the score before the update)
+  double previousMoodScore;
+  double previousSleepHours;
 
   LogEntry({
     this.id = '',
@@ -200,6 +293,8 @@ class LogEntry {
     this.notes = '',
     this.trigger = '',
     this.emotions = const [],
+    this.previousMoodScore = 0.0,
+    this.previousSleepHours = 0.0,
   });
 
   Map<String, dynamic> toMap() {
@@ -213,6 +308,8 @@ class LogEntry {
       'notes': notes,
       'trigger': trigger,
       'emotions': emotions,
+      'previousMoodScore': previousMoodScore,
+      'previousSleepHours': previousSleepHours,
     };
   }
 
@@ -228,6 +325,8 @@ class LogEntry {
       notes: map['notes'] ?? '',
       trigger: map['trigger'] ?? '',
       emotions: List<String>.from(map['emotions'] ?? []),
+      previousMoodScore: (map['previousMoodScore'] as num?)?.toDouble() ?? 0.0,
+      previousSleepHours: (map['previousSleepHours'] as num?)?.toDouble() ?? 0.0,
     );
   }
 }

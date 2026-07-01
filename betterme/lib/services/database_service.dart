@@ -46,6 +46,15 @@ class DatabaseService {
     await _db.collection('users').doc(userId).update({'streak': newStreak});
   }
 
+  // Denormalize today's mood onto the user's public profile so friends can see
+  // it in the friend circles without reading the owner-only `logs` collection.
+  Future<void> updateUserMood(String userId, double moodScore, String dateStr) async {
+    await _db.collection('users').doc(userId).update({
+      'moodScore': moodScore,
+      'moodDate': dateStr,
+    });
+  }
+
   // ==========================================
   // TASK OPERATIONS
   // ==========================================
@@ -123,6 +132,18 @@ class DatabaseService {
     await _db.collection('logs').doc(logId).update(fields);
   }
 
+  // Upsert mood or sleep fields using a deterministic doc ID ({userId}_{YYYY-MM-DD}).
+  // set+merge creates the doc on first write and updates only the supplied fields on
+  // subsequent writes — the other mode's data is physically untouched.
+  Future<void> upsertModeLog(String userId, DateTime date, Map<String, dynamic> modeFields) async {
+    final d = '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+    final docId = '${userId}_$d';
+    await _db.collection('logs').doc(docId).set(
+      {'userId': userId, 'date': Timestamp.fromDate(DateTime(date.year, date.month, date.day)), ...modeFields},
+      SetOptions(merge: true),
+    );
+  }
+
   // Stream logs for progressive reports and charts
   Stream<List<LogEntry>> streamLogEntries(String userId) {
     return _db
@@ -165,23 +186,85 @@ class DatabaseService {
   // COMMUNITY OPERATIONS
   // ==========================================
 
-  Future<void> addFriend(String currentUserId, String friendUsername) async {
-    // 1. Find the friend by username
-    final snapshot = await _db
+  // ==========================================
+  // FRIEND REQUEST OPERATIONS (FR_502 / FR_503)
+  // ==========================================
+
+  // Send a friend request by username; throws descriptive exceptions on failure
+  Future<void> sendFriendRequest(User fromUser, String toUsername) async {
+    // 1. Find target user by username
+    final snap = await _db
         .collection('users')
-        .where('username', isEqualTo: friendUsername)
+        .where('username', isEqualTo: toUsername)
         .limit(1)
         .get();
+    if (snap.docs.isEmpty) throw Exception('User not found');
 
-    if (snapshot.docs.isNotEmpty) {
-      final friendId = snapshot.docs.first.id;
-      
-      // 2. Add friendId to current user's friendsIds list
-      await _db.collection('users').doc(currentUserId).update({
-        'friendsIds': FieldValue.arrayUnion([friendId])
+    final toDoc = snap.docs.first;
+    final toId = toDoc.id;
+
+    if (toId == fromUser.id) throw Exception('Cannot add yourself');
+
+    // 2. Already friends?
+    if (fromUser.friendsIds.contains(toId)) throw Exception('Already friends');
+
+    // 3. Duplicate pending request?
+    final existing = await _db
+        .collection('friendRequests')
+        .where('fromId', isEqualTo: fromUser.id)
+        .where('toId', isEqualTo: toId)
+        .where('status', isEqualTo: 'pending')
+        .limit(1)
+        .get();
+    if (existing.docs.isNotEmpty) throw Exception('Request already sent');
+
+    // 4. Create the request
+    final request = FriendRequest(
+      fromId: fromUser.id,
+      fromUsername: fromUser.username,
+      fromAvatarUrl: fromUser.avatarUrl,
+      toId: toId,
+    );
+    await _db.collection('friendRequests').add(request.toMap());
+  }
+
+  // Stream incoming pending requests for the current user
+  Stream<List<FriendRequest>> streamIncomingRequests(String userId) {
+    return _db
+        .collection('friendRequests')
+        .where('toId', isEqualTo: userId)
+        .where('status', isEqualTo: 'pending')
+        .snapshots()
+        .map((snap) => snap.docs
+            .map((d) => FriendRequest.fromMap(d.data(), d.id))
+            .toList());
+  }
+
+  // Accept or reject a friend request
+  Future<void> respondToFriendRequest(
+    String requestId,
+    String fromId,
+    String toId,
+    bool accept,
+  ) async {
+    if (accept) {
+      // Mutual add
+      final batch = _db.batch();
+      batch.update(_db.collection('users').doc(toId), {
+        'friendsIds': FieldValue.arrayUnion([fromId]),
       });
+      batch.update(_db.collection('users').doc(fromId), {
+        'friendsIds': FieldValue.arrayUnion([toId]),
+      });
+      batch.update(_db.collection('friendRequests').doc(requestId), {
+        'status': 'accepted',
+      });
+      await batch.commit();
     } else {
-      throw Exception('User not found');
+      await _db
+          .collection('friendRequests')
+          .doc(requestId)
+          .update({'status': 'rejected'});
     }
   }
 
@@ -204,20 +287,30 @@ class DatabaseService {
   }
 
   // ==========================================
-  // LEADERBOARD OPERATION
+  // PRODUCTIVITY OPERATIONS
   // ==========================================
 
-  // Stream top users ranked by score
-  Stream<List<User>> streamLeaderboard({int limit = 10}) {
+  // Upsert today's productivity record using a deterministic doc ID
+  Future<void> saveProductivityRecord(ProductivityRecord record) async {
+    final docId = '${record.userId}_${record.date}';
+    await _db.collection('productivity').doc(docId).set(
+      record.toMap(),
+      SetOptions(merge: true),
+    );
+  }
+
+  // Stream all productivity records for a user, sorted by date ascending
+  Stream<List<ProductivityRecord>> streamProductivityRecords(String userId) {
     return _db
-        .collection('users')
-        .orderBy('score', descending: true)
-        .limit(limit)
+        .collection('productivity')
+        .where('userId', isEqualTo: userId)
         .snapshots()
         .map((snapshot) {
-      return snapshot.docs
-          .map((doc) => User.fromMap(doc.data(), doc.id))
+      final records = snapshot.docs
+          .map((doc) => ProductivityRecord.fromMap(doc.data(), doc.id))
           .toList();
+      records.sort((a, b) => a.date.compareTo(b.date));
+      return records;
     });
   }
 }

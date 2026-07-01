@@ -195,7 +195,23 @@ class _ProfileTabState extends State<ProfileTab> {
                 ),
                 child: CircleAvatar(
                   backgroundColor: AppTheme.borderDefault,
-                  backgroundImage: NetworkImage(user.avatarUrl),
+                  backgroundImage: user.avatarUrl.isNotEmpty
+                      ? NetworkImage(user.avatarUrl)
+                      : null,
+                  onBackgroundImageError:
+                      user.avatarUrl.isNotEmpty ? (_, _) {} : null,
+                  child: user.avatarUrl.isEmpty
+                      ? Text(
+                          user.username.isNotEmpty
+                              ? user.username[0].toUpperCase()
+                              : '?',
+                          style: const TextStyle(
+                            fontSize: 36,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.white,
+                          ),
+                        )
+                      : null,
                 ),
               ),
               Container(

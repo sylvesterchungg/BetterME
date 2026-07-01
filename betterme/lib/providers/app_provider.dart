@@ -16,9 +16,30 @@ class AppProvider with ChangeNotifier {
   List<Task> tasks = [];
   List<TaskCategory> taskCategories = [];
   List<LogEntry> logs = [];
-  List<User> leaderboard = []; // Dynamic leaderboard
   List<User> friends = []; // Dynamic friends
-  
+  List<FriendRequest> incomingRequests = [];
+  List<ProductivityRecord> productivityRecords = [];
+
+  // Friends-only leaderboard: the current user is ranked against the friends
+  // they've actually added/accepted — you must be friends to see someone's
+  // score/streak here. Computed from `currentUser` + `friends` (both kept live
+  // by their streams), sorted by score descending.
+  List<User> get leaderboard {
+    final list = <User>[
+      ?currentUser,
+      ...friends,
+    ];
+    list.sort((a, b) => b.score.compareTo(a.score));
+    return list;
+  }
+
+  // The current user's rank within the friends-only leaderboard (1-based).
+  int get myLeaderboardRank {
+    if (currentUser == null) return 0;
+    final idx = leaderboard.indexWhere((u) => u.id == currentUser!.id);
+    return idx >= 0 ? idx + 1 : 0;
+  }
+
   // Pedometer State
   int currentSteps = 0;
   StreamSubscription<StepCount>? _stepCountStream;
@@ -29,8 +50,12 @@ class AppProvider with ChangeNotifier {
   StreamSubscription? _tasksSub;
   StreamSubscription? _taskCategoriesSub;
   StreamSubscription? _logsSub;
-  StreamSubscription? _leaderboardSub;
   StreamSubscription? _friendsSub;
+  StreamSubscription? _productivitySub;
+  StreamSubscription? _requestsSub;
+
+  // Skip first task-stream emission (initial load); only save on user changes
+  bool _tasksInitialized = false;
 
   AppProvider() {
     _initAuthListener();
@@ -60,6 +85,9 @@ class AppProvider with ChangeNotifier {
         taskCategories = [];
         logs = [];
         friends = [];
+        incomingRequests = [];
+        productivityRecords = [];
+        _tasksInitialized = false;
         notifyListeners();
       } else {
         await _loadOrCreateProfile(firebaseUser);
@@ -96,40 +124,55 @@ class AppProvider with ChangeNotifier {
     // 1. Listen to User Profile changes
     _userSub = _dbService.streamUserProfile(userId).listen((user) {
       currentUser = user;
-      
+
       // Update friends stream if friendIds changed
       if (user != null) {
         _friendsSub?.cancel();
         _friendsSub = _dbService.streamFriends(user.friendsIds).listen((friendList) {
           friends = friendList;
           notifyListeners();
-        });
+        }, onError: (e) => debugPrint('[Firestore] friends stream error: $e'));
       }
       notifyListeners();
-    });
+    }, onError: (e) => debugPrint('[Firestore] user profile stream error: $e'));
 
-    // 2. Listen to User's Tasks
+    // 2. Listen to User's Tasks — save productivity snapshot on every change after initial load
+    _tasksInitialized = false;
     _tasksSub = _dbService.streamTasks(userId).listen((newTasks) {
       tasks = newTasks;
+      if (!_tasksInitialized) {
+        _tasksInitialized = true;
+      } else {
+        _saveProductivityRecord(userId);
+      }
       notifyListeners();
-    });
+    }, onError: (e) => debugPrint('[Firestore] tasks stream error: $e'));
 
     _taskCategoriesSub = _dbService.streamTaskCategories(userId).listen((newCategories) {
       taskCategories = newCategories;
       notifyListeners();
-    });
+    }, onError: (e) => debugPrint('[Firestore] taskCategories stream error: $e'));
 
     // 3. Listen to User's Logs (Sleep, Mood, Notes, Triggers)
     _logsSub = _dbService.streamLogEntries(userId).listen((newLogs) {
       logs = newLogs;
       notifyListeners();
-    });
+    }, onError: (e) => debugPrint('[Firestore] logs stream error: $e'));
 
-    // 4. Listen to Global Leaderboard
-    _leaderboardSub = _dbService.streamLeaderboard().listen((scores) {
-      leaderboard = scores;
+    // 4. Leaderboard is friends-only and derived from `currentUser` + `friends`
+    //    (both kept live by the streams above), so no separate query is needed.
+
+    // 5. Listen to Productivity Records
+    _productivitySub = _dbService.streamProductivityRecords(userId).listen((records) {
+      productivityRecords = records;
       notifyListeners();
-    });
+    }, onError: (e) => debugPrint('[Firestore] productivity stream error: $e'));
+
+    // 6. Listen to Incoming Friend Requests (FR_502 / FR_503)
+    _requestsSub = _dbService.streamIncomingRequests(userId).listen((requests) {
+      incomingRequests = requests;
+      notifyListeners();
+    }, onError: (e) => debugPrint('[Firestore] incoming requests stream error: $e'));
   }
 
   void _cancelSubscriptions() {
@@ -137,8 +180,24 @@ class AppProvider with ChangeNotifier {
     _tasksSub?.cancel();
     _taskCategoriesSub?.cancel();
     _logsSub?.cancel();
-    _leaderboardSub?.cancel();
     _friendsSub?.cancel();
+    _productivitySub?.cancel();
+    _requestsSub?.cancel();
+  }
+
+  void _saveProductivityRecord(String userId) {
+    final total = tasks.length;
+    final completed = tasks.where((t) => t.isCompleted).length;
+    final rate = total > 0 ? completed / total : 0.0;
+    final today = User.todayDateString();
+    final record = ProductivityRecord(
+      userId: userId,
+      date: today,
+      completionRate: rate,
+      completedTasks: completed,
+      totalTasks: total,
+    );
+    _dbService.saveProductivityRecord(record);
   }
 
   // ==========================================
@@ -319,6 +378,12 @@ class AppProvider with ChangeNotifier {
 
     await _dbService.addLogEntry(databaseEntry);
 
+    // Mirror today's mood onto the public profile for friend circles.
+    if (databaseEntry.moodScore > 0) {
+      await _dbService.updateUserMood(
+          currentUser!.id, databaseEntry.moodScore, User.todayDateString());
+    }
+
     // Streak check
     await checkAndUpdateStreak();
   }
@@ -326,6 +391,19 @@ class AppProvider with ChangeNotifier {
   Future<void> patchLog(String logId, Map<String, dynamic> fields) async {
     if (currentUser == null || logId.isEmpty) return;
     await _dbService.patchLogEntry(logId, fields);
+
+    // Mirror today's mood onto the public profile for friend circles.
+    if (fields.containsKey('moodScore')) {
+      await _dbService.updateUserMood(currentUser!.id,
+          (fields['moodScore'] as num).toDouble(), User.todayDateString());
+    }
+
+    await checkAndUpdateStreak();
+  }
+
+  Future<void> upsertModeLog(Map<String, dynamic> modeFields) async {
+    if (currentUser == null) return;
+    await _dbService.upsertModeLog(currentUser!.id, DateTime.now(), modeFields);
     await checkAndUpdateStreak();
   }
 
@@ -373,13 +451,17 @@ class AppProvider with ChangeNotifier {
   }
 
   // ==========================================
-  // COMMUNITY METHODS
+  // COMMUNITY METHODS (FR_502 / FR_503)
   // ==========================================
 
-  Future<void> addFriend(String friendUsername) async {
-    if (currentUser != null) {
-      await _dbService.addFriend(currentUser!.id, friendUsername);
-    }
+  Future<void> sendFriendRequest(String toUsername) async {
+    if (currentUser == null) return;
+    await _dbService.sendFriendRequest(currentUser!, toUsername);
+  }
+
+  Future<void> respondToRequest(String requestId, String fromId, bool accept) async {
+    if (currentUser == null) return;
+    await _dbService.respondToFriendRequest(requestId, fromId, currentUser!.id, accept);
   }
 
   // ==========================================

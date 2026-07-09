@@ -347,15 +347,27 @@ class _HealthTasksTabState extends State<HealthTasksTab> {
     Task task,
     _TaskCategoryUi? catUi,
   ) {
+    final now = DateTime.now();
+    final todayStart = DateTime(now.year, now.month, now.day);
+    final isOverdue = !task.isCompleted &&
+        task.dueDate != null &&
+        task.dueDate!.isBefore(todayStart);
+
     return GestureDetector(
       onTap: () => provider.toggleTask(task.id),
       child: Container(
         padding: const EdgeInsets.all(12),
         margin: const EdgeInsets.only(bottom: 8),
         decoration: BoxDecoration(
-          color: task.isCompleted ? AppTheme.surfaceContainerLow : Colors.white,
+          color: task.isCompleted
+              ? AppTheme.surfaceContainerLow
+              : isOverdue
+                  ? const Color(0xFFFFF0EE)
+                  : Colors.white,
           borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: AppTheme.borderDefault),
+          border: Border.all(
+            color: isOverdue ? AppTheme.error.withValues(alpha: 0.4) : AppTheme.borderDefault,
+          ),
         ),
         child: Row(
           children: [
@@ -366,7 +378,11 @@ class _HealthTasksTabState extends State<HealthTasksTab> {
                 color: task.isCompleted ? AppTheme.primary : Colors.white,
                 borderRadius: BorderRadius.circular(4),
                 border: Border.all(
-                  color: task.isCompleted ? AppTheme.primary : AppTheme.outlineVariant,
+                  color: task.isCompleted
+                      ? AppTheme.primary
+                      : isOverdue
+                          ? AppTheme.error
+                          : AppTheme.outlineVariant,
                   width: 2,
                 ),
               ),
@@ -394,7 +410,19 @@ class _HealthTasksTabState extends State<HealthTasksTab> {
                     runSpacing: 4,
                     children: [
                       if (catUi != null) _buildCategoryBadge(catUi),
-                      if (task.dueDate != null)
+                      if (isOverdue)
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: AppTheme.error.withValues(alpha: 0.12),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Text(
+                            'Overdue · ${DateFormat('MMM d').format(task.dueDate!)}',
+                            style: const TextStyle(fontSize: 11, color: AppTheme.error, fontWeight: FontWeight.w600),
+                          ),
+                        )
+                      else if (task.dueDate != null)
                         Text(
                           'Due: ${DateFormat('MMM d').format(task.dueDate!)}',
                           style: const TextStyle(fontSize: 11, color: AppTheme.outline),

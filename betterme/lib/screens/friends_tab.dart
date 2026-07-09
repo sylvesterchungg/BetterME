@@ -14,6 +14,7 @@ class FriendsTab extends StatefulWidget {
 
 class _FriendsTabState extends State<FriendsTab> {
   final TextEditingController _searchController = TextEditingController();
+  int _leaderboardIndex = 0; // 0=Overall 1=Mood 2=Sleep 3=Tasks
 
   void _handleSendRequest(AppProvider provider) async {
     final username = _searchController.text.trim();
@@ -528,11 +529,37 @@ class _FriendsTabState extends State<FriendsTab> {
   }
 
   Widget _buildLeaderboardCard(BuildContext context, AppProvider provider) {
-    final leaderboard = provider.leaderboard;
+    final allUsers = provider.leaderboard; // current user + friends
     final currentUser = provider.currentUser;
     final currentUserId = currentUser?.id;
-    final myRank = provider.myLeaderboardRank;
-    final userInTop10 = leaderboard.any((u) => u.id == currentUserId);
+
+    // Sort and compute display values based on selected tab
+    final tabs = [
+      (label: 'Overall', icon: Icons.leaderboard_outlined),
+      (label: 'Mood', icon: Icons.mood),
+      (label: 'Sleep', icon: Icons.bedtime_outlined),
+      (label: 'Tasks', icon: Icons.task_alt),
+    ];
+
+    List<User> sorted;
+    String Function(User) subtitle;
+    switch (_leaderboardIndex) {
+      case 1:
+        sorted = List.of(allUsers)..sort((a, b) => b.moodLeaderboardScore.compareTo(a.moodLeaderboardScore));
+        subtitle = (u) => '${u.moodLeaderboardScore.toStringAsFixed(1)} / 10 avg mood';
+      case 2:
+        sorted = List.of(allUsers)..sort((a, b) => b.sleepLeaderboardScore.compareTo(a.sleepLeaderboardScore));
+        subtitle = (u) => '${u.sleepLeaderboardScore.toStringAsFixed(1)} / 10 sleep quality';
+      case 3:
+        sorted = List.of(allUsers)..sort((a, b) => b.taskStreak.compareTo(a.taskStreak));
+        subtitle = (u) => '${u.taskStreak} tasks completed';
+      default: // 0 — Overall
+        sorted = List.of(allUsers)..sort((a, b) => b.score.compareTo(a.score));
+        subtitle = (u) => '${u.score} pts · ${u.streak}d streak';
+    }
+
+    final myRank = sorted.indexWhere((u) => u.id == currentUserId) + 1;
+    final userInList = sorted.any((u) => u.id == currentUserId);
 
     return Container(
       padding: const EdgeInsets.all(16),
@@ -549,47 +576,72 @@ class _FriendsTabState extends State<FriendsTab> {
         ],
       ),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Row(
-                children: [
-                  Icon(Icons.leaderboard, color: AppTheme.primary),
-                  SizedBox(width: 8),
-                  Text(
-                    'Leaderboard',
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
-                  ),
-                ],
-              ),
-              Text(
-                'All Time',
-                style: TextStyle(fontSize: 12, color: AppTheme.outline),
-              ),
+              Icon(Icons.leaderboard, color: AppTheme.primary),
+              SizedBox(width: 8),
+              Text('Friends Leaderboard', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
             ],
           ),
-          const SizedBox(height: 16),
-          if (leaderboard.isEmpty)
-            const Text(
-              'No data available',
-              style: TextStyle(color: Colors.grey),
+          const SizedBox(height: 14),
+          // Tab selector
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: tabs.asMap().entries.map((e) {
+                final i = e.key;
+                final tab = e.value;
+                final selected = _leaderboardIndex == i;
+                return GestureDetector(
+                  onTap: () => setState(() => _leaderboardIndex = i),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 180),
+                    margin: const EdgeInsets.only(right: 8),
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+                    decoration: BoxDecoration(
+                      color: selected ? AppTheme.primary : AppTheme.surfaceContainerHighest,
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(tab.icon, size: 14, color: selected ? Colors.white : AppTheme.onSurfaceVariant),
+                        const SizedBox(width: 5),
+                        Text(
+                          tab.label,
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            color: selected ? Colors.white : AppTheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              }).toList(),
             ),
-          ...leaderboard.asMap().entries.map((entry) {
-            int idx = entry.key;
-            var user = entry.value;
-            bool isUser = user.id == currentUserId;
-            return _buildLeaderboardRow(
-              '${idx + 1}',
-              isUser ? 'You (${user.username})' : user.username,
-              '${user.score} pts · ${user.streak}d streak',
-              idx == 0,
-              isUser,
-              user.avatarUrl,
-            );
-          }),
-          // FR_506 — show current user's rank if outside the visible top 10
-          if (!userInTop10 && currentUser != null) ...[
+          ),
+          const SizedBox(height: 16),
+          if (sorted.isEmpty)
+            const Text('No data available', style: TextStyle(color: Colors.grey))
+          else
+            ...sorted.asMap().entries.map((entry) {
+              final idx = entry.key;
+              final user = entry.value;
+              final isUser = user.id == currentUserId;
+              return _buildLeaderboardRow(
+                '${idx + 1}',
+                isUser ? 'You (${user.username})' : user.username,
+                subtitle(user),
+                idx == 0,
+                isUser,
+                user.avatarUrl,
+              );
+            }),
+          if (!userInList && currentUser != null) ...[
             const Padding(
               padding: EdgeInsets.symmetric(vertical: 4),
               child: Row(
@@ -597,10 +649,7 @@ class _FriendsTabState extends State<FriendsTab> {
                   Expanded(child: Divider()),
                   Padding(
                     padding: EdgeInsets.symmetric(horizontal: 8),
-                    child: Text(
-                      '···',
-                      style: TextStyle(color: AppTheme.outline),
-                    ),
+                    child: Text('···', style: TextStyle(color: AppTheme.outline)),
                   ),
                   Expanded(child: Divider()),
                 ],
@@ -609,7 +658,7 @@ class _FriendsTabState extends State<FriendsTab> {
             _buildLeaderboardRow(
               myRank > 0 ? '#$myRank' : '—',
               'You (${currentUser.username})',
-              '${currentUser.score} pts · ${currentUser.streak}d streak',
+              subtitle(currentUser),
               false,
               true,
               currentUser.avatarUrl,

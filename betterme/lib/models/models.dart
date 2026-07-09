@@ -15,6 +15,10 @@ class User {
   // logs. Only meaningful when moodDate == today (see fromMap).
   double moodScore; // 0.0 = no mood logged today
   String moodDate; // "YYYY-MM-DD"
+  // Leaderboard sub-scores (denormalized so friends can rank without reading logs)
+  int taskStreak;              // increments per task completed; resets on overdue
+  double moodLeaderboardScore; // avg mood 0.0–10.0
+  double sleepLeaderboardScore; // avg sleep quality 0.0–10.0
 
   User({
     required this.id,
@@ -28,6 +32,9 @@ class User {
     this.friendsIds = const [],
     this.moodScore = 0.0,
     this.moodDate = '',
+    this.taskStreak = 0,
+    this.moodLeaderboardScore = 0.0,
+    this.sleepLeaderboardScore = 0.0,
   });
 
   static String todayDateString() {
@@ -49,6 +56,9 @@ class User {
       'friendsIds': friendsIds,
       'moodScore': moodScore,
       'moodDate': moodDate,
+      'taskStreak': taskStreak,
+      'moodLeaderboardScore': moodLeaderboardScore,
+      'sleepLeaderboardScore': sleepLeaderboardScore,
     };
   }
 
@@ -77,6 +87,9 @@ class User {
       friendsIds: List<String>.from(map['friendsIds'] ?? []),
       moodScore: mood,
       moodDate: storedMoodDate,
+      taskStreak: map['taskStreak'] as int? ?? 0,
+      moodLeaderboardScore: (map['moodLeaderboardScore'] as num?)?.toDouble() ?? 0.0,
+      sleepLeaderboardScore: (map['sleepLeaderboardScore'] as num?)?.toDouble() ?? 0.0,
     );
   }
 }
@@ -281,6 +294,7 @@ class LogEntry {
   // Non-zero only when the day's entry was updated (stores the score before the update)
   double previousMoodScore;
   double previousSleepHours;
+  bool isSharedWithFriends; // whether this entry is visible to mutual friends
 
   LogEntry({
     this.id = '',
@@ -295,6 +309,7 @@ class LogEntry {
     this.emotions = const [],
     this.previousMoodScore = 0.0,
     this.previousSleepHours = 0.0,
+    this.isSharedWithFriends = false,
   });
 
   Map<String, dynamic> toMap() {
@@ -310,6 +325,7 @@ class LogEntry {
       'emotions': emotions,
       'previousMoodScore': previousMoodScore,
       'previousSleepHours': previousSleepHours,
+      'isSharedWithFriends': isSharedWithFriends,
     };
   }
 
@@ -327,6 +343,7 @@ class LogEntry {
       emotions: List<String>.from(map['emotions'] ?? []),
       previousMoodScore: (map['previousMoodScore'] as num?)?.toDouble() ?? 0.0,
       previousSleepHours: (map['previousSleepHours'] as num?)?.toDouble() ?? 0.0,
+      isSharedWithFriends: map['isSharedWithFriends'] as bool? ?? false,
     );
   }
 }

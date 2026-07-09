@@ -17,6 +17,7 @@ class AppProvider with ChangeNotifier {
   List<TaskCategory> taskCategories = [];
   List<LogEntry> logs = [];
   List<User> friends = []; // Dynamic friends
+  List<LogEntry> friendsSharedLogs = [];
   List<FriendRequest> incomingRequests = [];
   List<ProductivityRecord> productivityRecords = [];
 
@@ -51,6 +52,7 @@ class AppProvider with ChangeNotifier {
   StreamSubscription? _taskCategoriesSub;
   StreamSubscription? _logsSub;
   StreamSubscription? _friendsSub;
+  StreamSubscription? _friendsLogsSub;
   StreamSubscription? _productivitySub;
   StreamSubscription? _requestsSub;
 
@@ -85,6 +87,7 @@ class AppProvider with ChangeNotifier {
         taskCategories = [];
         logs = [];
         friends = [];
+        friendsSharedLogs = [];
         incomingRequests = [];
         productivityRecords = [];
         _tasksInitialized = false;
@@ -132,6 +135,12 @@ class AppProvider with ChangeNotifier {
           friends = friendList;
           notifyListeners();
         }, onError: (e) => debugPrint('[Firestore] friends stream error: $e'));
+
+        _friendsLogsSub?.cancel();
+        _friendsLogsSub = _dbService.streamFriendsSharedLogs(user.friendsIds).listen((sharedLogs) {
+          friendsSharedLogs = sharedLogs;
+          notifyListeners();
+        }, onError: (e) => debugPrint('[Firestore] friends shared logs stream error: $e'));
       }
       notifyListeners();
     }, onError: (e) => debugPrint('[Firestore] user profile stream error: $e'));
@@ -146,6 +155,7 @@ class AppProvider with ChangeNotifier {
         _saveProductivityRecord(userId);
       }
       notifyListeners();
+      _checkAndHandleOverdueTasks();
     }, onError: (e) => debugPrint('[Firestore] tasks stream error: $e'));
 
     _taskCategoriesSub = _dbService.streamTaskCategories(userId).listen((newCategories) {
@@ -157,6 +167,7 @@ class AppProvider with ChangeNotifier {
     _logsSub = _dbService.streamLogEntries(userId).listen((newLogs) {
       logs = newLogs;
       notifyListeners();
+      _recomputeLeaderboardScores();
     }, onError: (e) => debugPrint('[Firestore] logs stream error: $e'));
 
     // 4. Leaderboard is friends-only and derived from `currentUser` + `friends`
@@ -181,8 +192,46 @@ class AppProvider with ChangeNotifier {
     _taskCategoriesSub?.cancel();
     _logsSub?.cancel();
     _friendsSub?.cancel();
+    _friendsLogsSub?.cancel();
     _productivitySub?.cancel();
     _requestsSub?.cancel();
+  }
+
+  // Detect incomplete tasks past their due date; reset both streaks if found.
+  void _checkAndHandleOverdueTasks() {
+    if (currentUser == null || tasks.isEmpty) return;
+    final today = DateTime.now();
+    final todayStart = DateTime(today.year, today.month, today.day);
+    final hasOverdue = tasks.any(
+      (t) => !t.isCompleted && t.dueDate != null && t.dueDate!.isBefore(todayStart),
+    );
+    if (hasOverdue && (currentUser!.taskStreak > 0 || currentUser!.streak > 1)) {
+      _dbService.updateLeaderboardData(currentUser!.id, {
+        'taskStreak': 0,
+        'streak': 1,
+      });
+      _recomputeLeaderboardScores();
+    }
+  }
+
+  // Recompute mood/sleep leaderboard scores and overall score from current logs.
+  void _recomputeLeaderboardScores() {
+    if (currentUser == null) return;
+    final moodLogs = logs.where((l) => l.moodScore > 0).toList();
+    final sleepLogs = logs.where((l) => l.sleepQuality > 0).toList();
+    final moodScore = moodLogs.isEmpty
+        ? 0.0
+        : moodLogs.map((l) => l.moodScore).reduce((a, b) => a + b) / moodLogs.length;
+    final sleepScore = sleepLogs.isEmpty
+        ? 0.0
+        : sleepLogs.map((l) => l.sleepQuality.toDouble()).reduce((a, b) => a + b) / sleepLogs.length;
+    final taskPts = currentUser!.taskStreak;
+    final overall = (moodScore * 10 + sleepScore * 10 + taskPts).round();
+    _dbService.updateLeaderboardData(currentUser!.id, {
+      'moodLeaderboardScore': moodScore,
+      'sleepLeaderboardScore': sleepScore,
+      'score': overall,
+    });
   }
 
   void _saveProductivityRecord(String userId) {
@@ -325,6 +374,12 @@ class AppProvider with ChangeNotifier {
     if (index != -1) {
       final newStatus = !tasks[index].isCompleted;
       await _dbService.toggleTask(id, newStatus);
+      // Completing a task advances the task streak; unchecking reverts it.
+      if (currentUser != null) {
+        final newTaskStreak = (currentUser!.taskStreak + (newStatus ? 1 : -1)).clamp(0, 9999);
+        await _dbService.updateLeaderboardData(currentUser!.id, {'taskStreak': newTaskStreak});
+        _recomputeLeaderboardScores();
+      }
     }
   }
 
@@ -405,6 +460,38 @@ class AppProvider with ChangeNotifier {
     if (currentUser == null) return;
     await _dbService.upsertModeLog(currentUser!.id, DateTime.now(), modeFields);
     await checkAndUpdateStreak();
+  }
+
+  Future<void> saveLogNote(DateTime date, String notes) async {
+    if (currentUser == null) return;
+    await _dbService.upsertModeLog(currentUser!.id, date, {'notes': notes});
+  }
+
+  // Full-field upsert for a specific day's journal entry (create or edit).
+  // Unlike updateLog(), this doesn't require an existing document id — it
+  // relies on upsertModeLog's deterministic {userId}_{date} doc id, so it
+  // works whether the entry already exists or is being created for the first time.
+  Future<void> saveLogFields(DateTime date, Map<String, dynamic> fields) async {
+    if (currentUser == null) return;
+    await _dbService.upsertModeLog(currentUser!.id, date, fields);
+
+    final isToday = User.todayDateString() ==
+        '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+    if (isToday && fields.containsKey('moodScore')) {
+      await _dbService.updateUserMood(currentUser!.id,
+          (fields['moodScore'] as num).toDouble(), User.todayDateString());
+    }
+
+    await checkAndUpdateStreak();
+  }
+
+  Future<void> toggleLogSharing(LogEntry log) async {
+    if (currentUser == null) return;
+    await _dbService.upsertModeLog(
+      currentUser!.id,
+      log.date,
+      {'isSharedWithFriends': !log.isSharedWithFriends},
+    );
   }
 
   Future<void> updateLog(LogEntry entry) async {

@@ -46,6 +46,10 @@ class DatabaseService {
     await _db.collection('users').doc(userId).update({'streak': newStreak});
   }
 
+  Future<void> updateLeaderboardData(String userId, Map<String, dynamic> data) async {
+    await _db.collection('users').doc(userId).update(data);
+  }
+
   // Denormalize today's mood onto the user's public profile so friends can see
   // it in the friend circles without reading the owner-only `logs` collection.
   Future<void> updateUserMood(String userId, double moodScore, String dateStr) async {
@@ -155,6 +159,25 @@ class DatabaseService {
       return snapshot.docs
           .map((doc) => LogEntry.fromMap(doc.data(), doc.id))
           .toList();
+    });
+  }
+
+  // Stream shared log entries from a user's friends (up to 10 friend IDs).
+  // Filters isSharedWithFriends client-side to avoid a new composite index.
+  Stream<List<LogEntry>> streamFriendsSharedLogs(List<String> friendIds) {
+    if (friendIds.isEmpty) return Stream.value([]);
+    final ids = friendIds.take(10).toList();
+    return _db
+        .collection('logs')
+        .where('userId', whereIn: ids)
+        .snapshots()
+        .map((snap) {
+      final result = snap.docs
+          .map((d) => LogEntry.fromMap(d.data(), d.id))
+          .where((l) => l.isSharedWithFriends)
+          .toList();
+      result.sort((a, b) => b.date.compareTo(a.date));
+      return result;
     });
   }
 

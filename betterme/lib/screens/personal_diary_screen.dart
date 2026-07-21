@@ -19,6 +19,10 @@ class _PersonalDiaryScreenState extends State<PersonalDiaryScreen> {
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
 
+  // View mode
+  bool _calendarView = false;
+  DateTime _calendarMonth = DateTime.now();
+
   @override
   void initState() {
     super.initState();
@@ -42,12 +46,14 @@ class _PersonalDiaryScreenState extends State<PersonalDiaryScreen> {
         dateStr.contains(_searchQuery);
   }
 
-  void _showEditSheet(BuildContext context, AppProvider provider, {LogEntry? log}) {
+  void _showEditSheet(BuildContext context, AppProvider provider,
+      {LogEntry? log, DateTime? date}) {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (ctx) => _EditJournalSheet(provider: provider, log: log),
+      builder: (ctx) =>
+          _EditJournalSheet(provider: provider, log: log, initialDate: date),
     );
   }
 
@@ -76,12 +82,21 @@ class _PersonalDiaryScreenState extends State<PersonalDiaryScreen> {
               const SizedBox(height: 20),
               _buildStatsRow(provider.currentUser?.streak ?? 0, myLogs.length),
               const SizedBox(height: 20),
-              _buildSearchBar(),
-              const SizedBox(height: 24),
-              _buildMyEntriesSection(context, provider, filtered),
-              if (friendsLogs.isNotEmpty) ...[
-                const SizedBox(height: 32),
-                _buildFriendsSection(context, provider, friendsLogs),
+              // View toggle + search (search only in list view)
+              _buildViewToggle(),
+              if (!_calendarView) ...[
+                const SizedBox(height: 12),
+                _buildSearchBar(),
+              ],
+              const SizedBox(height: 20),
+              if (_calendarView)
+                _buildCalendar(context, provider, myLogs)
+              else ...[
+                _buildMyEntriesSection(context, provider, filtered),
+                if (friendsLogs.isNotEmpty) ...[
+                  const SizedBox(height: 32),
+                  _buildFriendsSection(context, provider, friendsLogs),
+                ],
               ],
               const SizedBox(height: 80),
             ],
@@ -96,6 +111,253 @@ class _PersonalDiaryScreenState extends State<PersonalDiaryScreen> {
           label: const Text('Write about today'),
         ),
       ),
+    );
+  }
+
+  Widget _buildViewToggle() {
+    return Container(
+      decoration: BoxDecoration(
+          color: AppTheme.borderDefault, borderRadius: BorderRadius.circular(12)),
+      padding: const EdgeInsets.all(4),
+      child: Row(
+        children: [
+          _toggleBtn(label: 'List', icon: Icons.list, active: !_calendarView,
+              onTap: () => setState(() => _calendarView = false)),
+          _toggleBtn(label: 'Calendar', icon: Icons.calendar_month, active: _calendarView,
+              onTap: () => setState(() => _calendarView = true)),
+        ],
+      ),
+    );
+  }
+
+  Widget _toggleBtn({
+    required String label,
+    required IconData icon,
+    required bool active,
+    required VoidCallback onTap,
+  }) {
+    return Expanded(
+      child: GestureDetector(
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          padding: const EdgeInsets.symmetric(vertical: 10),
+          decoration: BoxDecoration(
+            color: active ? Colors.white : Colors.transparent,
+            borderRadius: BorderRadius.circular(8),
+            boxShadow: active
+                ? [BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 4)]
+                : [],
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, size: 16,
+                  color: active ? AppTheme.primary : AppTheme.outline),
+              const SizedBox(width: 6),
+              Text(label,
+                  style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: active ? AppTheme.primary : AppTheme.outline)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ─────────────────────────────── CALENDAR VIEW ─────────────────────────────
+
+  Widget _buildCalendar(BuildContext context, AppProvider provider, List<LogEntry> logs) {
+    final logMap = <String, LogEntry>{};
+    for (final l in logs) {
+      final key = '${l.date.year}-${l.date.month}-${l.date.day}';
+      logMap.putIfAbsent(key, () => l);
+    }
+
+    final year = _calendarMonth.year;
+    final month = _calendarMonth.month;
+    final daysInMonth = DateTime(year, month + 1, 0).day;
+    // weekday: Mon=1…Sun=7 → offset so Sunday=0
+    final firstWeekday = DateTime(year, month, 1).weekday % 7;
+
+    final now = DateTime.now();
+    final todayStr = '${now.year}-${now.month}-${now.day}';
+    final canGoForward =
+        year < now.year || (year == now.year && month < now.month);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Month navigation
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: AppTheme.borderDefault),
+          ),
+          child: Row(
+            children: [
+              IconButton(
+                icon: const Icon(Icons.chevron_left, size: 20),
+                onPressed: () => setState(
+                    () => _calendarMonth = DateTime(year, month - 1)),
+              ),
+              Expanded(
+                child: Text(
+                  DateFormat('MMMM yyyy').format(_calendarMonth),
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                      fontSize: 15, fontWeight: FontWeight.w600),
+                ),
+              ),
+              IconButton(
+                icon: Icon(Icons.chevron_right,
+                    size: 20,
+                    color: canGoForward
+                        ? AppTheme.onSurface
+                        : AppTheme.outlineVariant),
+                onPressed: canGoForward
+                    ? () => setState(
+                        () => _calendarMonth = DateTime(year, month + 1))
+                    : null,
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+
+        // Calendar grid
+        Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: AppTheme.borderDefault),
+          ),
+          child: Column(
+            children: [
+              // Weekday headers
+              Row(
+                children: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+                    .map((d) => Expanded(
+                          child: Center(
+                            child: Text(d,
+                                style: const TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w600,
+                                    color: AppTheme.outline)),
+                          ),
+                        ))
+                    .toList(),
+              ),
+              const SizedBox(height: 8),
+
+              // Day cells — 7-column grid
+              GridView.builder(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                gridDelegate:
+                    const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 7,
+                  childAspectRatio: 1.0,
+                  mainAxisSpacing: 4,
+                ),
+                itemCount: firstWeekday + daysInMonth,
+                itemBuilder: (ctx, index) {
+                  if (index < firstWeekday) return const SizedBox();
+                  final day = index - firstWeekday + 1;
+                  final date = DateTime(year, month, day);
+                  final key = '$year-$month-$day';
+                  final isToday = key == todayStr;
+                  final isFuture = date.isAfter(DateTime(now.year, now.month, now.day));
+                  final log = logMap[key];
+
+                  return GestureDetector(
+                    onTap: isFuture
+                        ? null
+                        : () {
+                            if (log != null) {
+                              _showEditSheet(context, provider, log: log);
+                            } else {
+                              _showEditSheet(context, provider, date: date);
+                            }
+                          },
+                    child: _buildDayCell(day, log, isToday, isFuture),
+                  );
+                },
+              ),
+            ],
+          ),
+        ),
+
+        const SizedBox(height: 16),
+        // Legend
+        Wrap(
+          alignment: WrapAlignment.center,
+          spacing: 16,
+          runSpacing: 8,
+          children: [
+            _legendDot(AppTheme.primary, 'Today'),
+            _legendDot(const Color(0xFF2E7D32), 'High (7+)'),
+            _legendDot(const Color(0xFFF57F17), 'Moderate (4–7)'),
+            _legendDot(AppTheme.error, 'Low (<4)'),
+            _legendDot(AppTheme.outlineVariant, 'No entry'),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildDayCell(int day, LogEntry? log, bool isToday, bool isFuture) {
+    Color bgColor = Colors.transparent;
+    Color textColor = isFuture ? AppTheme.outlineVariant : AppTheme.onSurface;
+    Widget? dot;
+
+    if (isToday) {
+      bgColor = AppTheme.primary;
+      textColor = Colors.white;
+    } else if (log != null) {
+      final moodColor = _moodColor(log.moodScore);
+      bgColor = moodColor.withValues(alpha: 0.12);
+      dot = Container(
+        width: 5,
+        height: 5,
+        decoration: BoxDecoration(color: moodColor, shape: BoxShape.circle),
+      );
+    }
+
+    return Container(
+      decoration: BoxDecoration(
+        color: bgColor,
+        shape: BoxShape.circle,
+      ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Text('$day',
+              style: TextStyle(
+                  fontSize: 13,
+                  fontWeight:
+                      isToday ? FontWeight.w700 : FontWeight.w400,
+                  color: textColor)),
+          ?dot,
+        ],
+      ),
+    );
+  }
+
+  Widget _legendDot(Color color, String label) {
+    return Row(
+      children: [
+        Container(
+            width: 8, height: 8,
+            decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
+        const SizedBox(width: 4),
+        Text(label, style: const TextStyle(fontSize: 11, color: AppTheme.outline)),
+      ],
     );
   }
 
@@ -531,19 +793,16 @@ class _PersonalDiaryScreenState extends State<PersonalDiaryScreen> {
 
   IconData _moodIcon(double score) {
     if (score <= 0) return Icons.sentiment_neutral;
-    if (score >= 8.5) return Icons.sentiment_very_satisfied;
-    if (score >= 6) return Icons.sentiment_satisfied;
-    if (score >= 4) return Icons.sentiment_neutral;
-    if (score >= 2) return Icons.sentiment_dissatisfied;
-    return Icons.sentiment_very_dissatisfied;
+    if (score >= 7) return Icons.sentiment_very_satisfied; // High
+    if (score >= 4) return Icons.sentiment_satisfied; // Moderate
+    return Icons.sentiment_dissatisfied; // Low
   }
 
   Color _moodColor(double score) {
     if (score <= 0) return AppTheme.outlineVariant;
-    if (score >= 8.5) return const Color(0xFF2E7D32);
-    if (score >= 6) return AppTheme.primary;
-    if (score >= 4) return const Color(0xFFF57F17);
-    return AppTheme.error;
+    if (score >= 7) return const Color(0xFF2E7D32); // High
+    if (score >= 4) return const Color(0xFFF57F17); // Moderate
+    return AppTheme.error; // Low
   }
 }
 
@@ -553,8 +812,9 @@ class _PersonalDiaryScreenState extends State<PersonalDiaryScreen> {
 class _EditJournalSheet extends StatefulWidget {
   final AppProvider provider;
   final LogEntry? log;
+  final DateTime? initialDate;
 
-  const _EditJournalSheet({required this.provider, this.log});
+  const _EditJournalSheet({required this.provider, this.log, this.initialDate});
 
   @override
   State<_EditJournalSheet> createState() => _EditJournalSheetState();
@@ -583,7 +843,7 @@ class _EditJournalSheetState extends State<_EditJournalSheet> {
   void initState() {
     super.initState();
     final log = widget.log;
-    _date = log?.date ?? DateTime.now();
+    _date = log?.date ?? widget.initialDate ?? DateTime.now();
     _moodScore = log?.moodScore ?? 0;
     _sleepHours = log?.sleepHours ?? 0;
     _sleepQuality = log?.sleepQuality ?? 0;

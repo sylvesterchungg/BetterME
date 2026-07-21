@@ -6,7 +6,6 @@ class User {
   String username;
   String avatarUrl;
   int streak;
-  int score; // Leaderboard score
   int waterIntake;
   int waterGoal;
   String waterIntakeDate; // "YYYY-MM-DD" — resets intake when date changes
@@ -15,10 +14,8 @@ class User {
   // logs. Only meaningful when moodDate == today (see fromMap).
   double moodScore; // 0.0 = no mood logged today
   String moodDate; // "YYYY-MM-DD"
-  // Leaderboard sub-scores (denormalized so friends can rank without reading logs)
-  int taskStreak;              // increments per task completed; resets on overdue
-  double moodLeaderboardScore; // avg mood 0.0–10.0
-  double sleepLeaderboardScore; // avg sleep quality 0.0–10.0
+  // Task-completion streak (increments per task completed; resets on overdue).
+  int taskStreak;
   // FR_904 — notification preferences
   bool notificationsEnabled; // master switch for task-reminder local notifications
   bool friendActivityNotif;  // in-app friend-accepted notifications
@@ -29,7 +26,6 @@ class User {
     required this.username,
     required this.avatarUrl,
     required this.streak,
-    this.score = 0,
     this.waterIntake = 0,
     this.waterGoal = 2500,
     this.waterIntakeDate = '',
@@ -37,8 +33,6 @@ class User {
     this.moodScore = 0.0,
     this.moodDate = '',
     this.taskStreak = 0,
-    this.moodLeaderboardScore = 0.0,
-    this.sleepLeaderboardScore = 0.0,
     this.notificationsEnabled = true,
     this.friendActivityNotif = true,
     this.streakAlertsNotif = true,
@@ -56,7 +50,6 @@ class User {
       'username': username,
       'avatarUrl': avatarUrl,
       'streak': streak,
-      'score': score,
       'waterIntake': waterIntake,
       'waterGoal': waterGoal,
       'waterIntakeDate': waterIntakeDate,
@@ -64,8 +57,6 @@ class User {
       'moodScore': moodScore,
       'moodDate': moodDate,
       'taskStreak': taskStreak,
-      'moodLeaderboardScore': moodLeaderboardScore,
-      'sleepLeaderboardScore': sleepLeaderboardScore,
       'notificationsEnabled': notificationsEnabled,
       'friendActivityNotif': friendActivityNotif,
       'streakAlertsNotif': streakAlertsNotif,
@@ -90,7 +81,6 @@ class User {
       username: map['username'] ?? '',
       avatarUrl: map['avatarUrl'] ?? '',
       streak: map['streak'] ?? 0,
-      score: map['score'] ?? 0,
       waterIntake: intake,
       waterGoal: map['waterGoal'] as int? ?? 2500,
       waterIntakeDate: storedDate,
@@ -98,8 +88,6 @@ class User {
       moodScore: mood,
       moodDate: storedMoodDate,
       taskStreak: map['taskStreak'] as int? ?? 0,
-      moodLeaderboardScore: (map['moodLeaderboardScore'] as num?)?.toDouble() ?? 0.0,
-      sleepLeaderboardScore: (map['sleepLeaderboardScore'] as num?)?.toDouble() ?? 0.0,
       notificationsEnabled: map['notificationsEnabled'] as bool? ?? true,
       friendActivityNotif: map['friendActivityNotif'] as bool? ?? true,
       streakAlertsNotif: map['streakAlertsNotif'] as bool? ?? true,
@@ -291,6 +279,78 @@ class ProductivityRecord {
       totalTasks: map['totalTasks'] as int? ?? 0,
     );
   }
+}
+
+/// A short, digestible AI wellness insight (FR_405/FR_406). Cached in Firestore
+/// so the dashboard loads instantly and Gemini is only called when the user's
+/// recent data actually changes (or the cache is older than a day).
+class AIInsight {
+  /// e.g. "Positive Sleep-Productivity Link"
+  final String correlationType;
+
+  /// One encouraging sentence, e.g. "Sufficient sleep is driving your focus."
+  final String headline;
+
+  /// 1-2 plain-language sentences grounded in the user's own numbers.
+  final String breakdown;
+
+  /// One gentle, specific, non-judgmental suggestion.
+  final String nudge;
+
+  /// Fingerprint of the 7-day data window this insight was generated from.
+  /// When the live data's signature differs, the insight is regenerated.
+  final String dataSignature;
+
+  /// When this insight was produced (used for the 24-hour freshness check).
+  final DateTime generatedAt;
+
+  AIInsight({
+    required this.correlationType,
+    required this.headline,
+    required this.breakdown,
+    required this.nudge,
+    this.dataSignature = '',
+    DateTime? generatedAt,
+  }) : generatedAt = generatedAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+
+  bool get isEmpty => headline.isEmpty && breakdown.isEmpty && nudge.isEmpty;
+
+  /// Parses the raw JSON returned by Gemini (snake_case keys).
+  factory AIInsight.fromJson(Map<String, dynamic> json) => AIInsight(
+        correlationType: (json['correlation_type'] ?? '').toString().trim(),
+        headline: (json['headline_insight'] ?? '').toString().trim(),
+        breakdown: (json['detailed_breakdown'] ?? '').toString().trim(),
+        nudge: (json['actionable_nudge'] ?? '').toString().trim(),
+      );
+
+  /// Reads back a cached insight from Firestore.
+  factory AIInsight.fromMap(Map<String, dynamic> map) => AIInsight(
+        correlationType: (map['correlationType'] ?? '').toString(),
+        headline: (map['headline'] ?? '').toString(),
+        breakdown: (map['breakdown'] ?? '').toString(),
+        nudge: (map['nudge'] ?? '').toString(),
+        dataSignature: (map['dataSignature'] ?? '').toString(),
+        generatedAt: DateTime.tryParse((map['generatedAt'] ?? '').toString()),
+      );
+
+  Map<String, dynamic> toMap() => {
+        'correlationType': correlationType,
+        'headline': headline,
+        'breakdown': breakdown,
+        'nudge': nudge,
+        'dataSignature': dataSignature,
+        'generatedAt': generatedAt.toIso8601String(),
+      };
+
+  AIInsight copyWith({String? dataSignature, DateTime? generatedAt}) =>
+      AIInsight(
+        correlationType: correlationType,
+        headline: headline,
+        breakdown: breakdown,
+        nudge: nudge,
+        dataSignature: dataSignature ?? this.dataSignature,
+        generatedAt: generatedAt ?? this.generatedAt,
+      );
 }
 
 class LogEntry {

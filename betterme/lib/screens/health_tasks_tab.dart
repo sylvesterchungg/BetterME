@@ -86,6 +86,25 @@ class HealthTasksTab extends StatefulWidget {
 class _HealthTasksTabState extends State<HealthTasksTab> {
   final TextEditingController _waterController = TextEditingController();
 
+  // Task IDs that have been toggled to complete but are still animating out
+  // of the active list. Removed from this set after the animation completes,
+  // at which point they naturally appear in the Completed section.
+  final Set<String> _animatingOut = {};
+
+  void _completeTask(AppProvider provider, Task task) {
+    if (task.isCompleted) {
+      // Un-completing: instant, no animation needed
+      provider.toggleTask(task.id);
+      return;
+    }
+    if (_animatingOut.contains(task.id)) return; // already mid-animation
+    setState(() => _animatingOut.add(task.id));
+    provider.toggleTask(task.id);
+    Future.delayed(const Duration(milliseconds: 1500), () {
+      if (mounted) setState(() => _animatingOut.remove(task.id));
+    });
+  }
+
   @override
   void dispose() {
     _waterController.dispose();
@@ -305,37 +324,118 @@ class _HealthTasksTabState extends State<HealthTasksTab> {
     final tasks = provider.tasks;
     final categoryMap = {for (final c in allCategories) c.name: c};
 
+    // Active = not completed, OR completed but still mid-animation (fade out)
+    final activeTasks = tasks
+        .where((t) => !t.isCompleted || _animatingOut.contains(t.id))
+        .toList();
+    // Completed = done AND animation has settled
+    final completedTasks = tasks
+        .where((t) => t.isCompleted && !_animatingOut.contains(t.id))
+        .toList();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: AppTheme.borderDefault),
+          ),
+          child: activeTasks.isEmpty && completedTasks.isEmpty
+              ? const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 24),
+                  child: Center(
+                    child: Column(
+                      children: [
+                        Icon(Icons.task_alt, size: 40, color: AppTheme.outlineVariant),
+                        SizedBox(height: 8),
+                        Text(
+                          'No tasks yet. Tap + to add one.',
+                          style: TextStyle(fontSize: 14, color: AppTheme.outline),
+                        ),
+                      ],
+                    ),
+                  ),
+                )
+              : Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('Your Tasks',
+                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+                    const SizedBox(height: 16),
+                    if (activeTasks.isEmpty)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 8),
+                        child: Row(
+                          children: const [
+                            Icon(Icons.celebration, size: 16, color: AppTheme.primary),
+                            SizedBox(width: 6),
+                            Text('All tasks done!',
+                                style: TextStyle(fontSize: 14, color: AppTheme.outline)),
+                          ],
+                        ),
+                      ),
+                    ...activeTasks.map((t) {
+                      final isAnimating = _animatingOut.contains(t.id);
+                      return AnimatedOpacity(
+                        opacity: isAnimating ? 0.35 : 1.0,
+                        duration: const Duration(milliseconds: 1400),
+                        child: _buildTaskItem(context, provider, t, categoryMap[t.category]),
+                      );
+                    }),
+                  ],
+                ),
+        ),
+        if (completedTasks.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          _buildCompletedSection(context, provider, completedTasks, categoryMap),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildCompletedSection(
+    BuildContext context,
+    AppProvider provider,
+    List<Task> tasks,
+    Map<String, _TaskCategoryUi> categoryMap,
+  ) {
     return Container(
-      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppTheme.surfaceContainerLow,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: AppTheme.borderDefault),
       ),
-      child: tasks.isEmpty
-          ? const Padding(
-              padding: EdgeInsets.symmetric(vertical: 24),
-              child: Center(
-                child: Column(
-                  children: [
-                    Icon(Icons.task_alt, size: 40, color: AppTheme.outlineVariant),
-                    SizedBox(height: 8),
-                    Text(
-                      'No tasks yet. Tap + to add one.',
-                      style: TextStyle(fontSize: 14, color: AppTheme.outline),
-                    ),
-                  ],
-                ),
+      child: Theme(
+        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+        child: ExpansionTile(
+          initiallyExpanded: false,
+          tilePadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+          title: Row(
+            children: [
+              const Icon(Icons.check_circle_outline, size: 18, color: AppTheme.primary),
+              const SizedBox(width: 8),
+              Text(
+                'Completed (${tasks.length})',
+                style: const TextStyle(
+                    fontSize: 16, fontWeight: FontWeight.w600, color: AppTheme.onSurface),
               ),
-            )
-          : Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text('Your Tasks', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
-                const SizedBox(height: 16),
-                ...tasks.map((t) => _buildTaskItem(context, provider, t, categoryMap[t.category])),
-              ],
+            ],
+          ),
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+              child: Column(
+                children: tasks
+                    .map((t) => _buildTaskItem(context, provider, t, categoryMap[t.category]))
+                    .toList(),
+              ),
             ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -352,7 +452,7 @@ class _HealthTasksTabState extends State<HealthTasksTab> {
         task.dueDate!.isBefore(todayStart);
 
     return GestureDetector(
-      onTap: () => provider.toggleTask(task.id),
+      onTap: () => _completeTask(provider, task),
       child: Container(
         padding: const EdgeInsets.all(12),
         margin: const EdgeInsets.only(bottom: 8),

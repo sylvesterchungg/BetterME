@@ -232,7 +232,8 @@ class _ProfileTabState extends State<ProfileTab> {
         ),
         const SizedBox(height: 4),
         Text(
-          ' ${user.streak} Day Streak',
+          ' ${user.streak} Day Streak'
+          '${provider.myLeaderboardRank > 0 ? '  ·  Rank #${provider.myLeaderboardRank}' : ''}',
           style: const TextStyle(fontSize: 14, color: AppTheme.outline),
         ),
         const SizedBox(height: 16),
@@ -493,6 +494,25 @@ class _ProfileTabState extends State<ProfileTab> {
   Widget _buildLogoutSection(AppProvider provider) {
     return Column(
       children: [
+        // TEMPORARY / DEV-ONLY: one-tap demo data. Remove before shipping.
+        Builder(
+          builder: (context) => OutlinedButton.icon(
+            onPressed: () async {
+              final messenger = ScaffoldMessenger.of(context);
+              messenger.showSnackBar(
+                const SnackBar(content: Text('Seeding demo data…')),
+              );
+              await provider.seedDemoData();
+              messenger.showSnackBar(
+                const SnackBar(
+                    content: Text('Demo data added — check Trends & AI insight')),
+              );
+            },
+            icon: const Icon(Icons.auto_graph),
+            label: const Text('Seed demo data (dev)'),
+          ),
+        ),
+        const SizedBox(height: 16),
         OutlinedButton.icon(
           onPressed: () {
             // AuthGate returns to LoginScreen once sign-out completes.

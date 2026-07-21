@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart' as firebase_auth;
 import 'package:google_sign_in/google_sign_in.dart';
@@ -21,20 +22,26 @@ class AppProvider with ChangeNotifier {
   List<FriendRequest> incomingRequests = [];
   List<ProductivityRecord> productivityRecords = [];
   List<AppNotification> notifications = [];
+  // Most recent cached AI insight (client-side cache; see AIInsightService).
+  AIInsight? cachedInsight;
 
   int get unreadNotificationCount =>
       notifications.where((n) => !n.isRead).length;
 
   // Friends-only leaderboard: the current user is ranked against the friends
   // they've actually added/accepted — you must be friends to see someone's
-  // score/streak here. Computed from `currentUser` + `friends` (both kept live
-  // by their streams), sorted by score descending.
+  // streak here. Computed from `currentUser` + `friends` (both kept live by
+  // their streams), sorted by streak descending (FR_505 / LeaderboardEntry),
+  // with username as a deterministic tie-breaker.
   List<User> get leaderboard {
     final list = <User>[
       ?currentUser,
       ...friends,
     ];
-    list.sort((a, b) => b.score.compareTo(a.score));
+    list.sort((a, b) {
+      final byStreak = b.streak.compareTo(a.streak);
+      return byStreak != 0 ? byStreak : a.username.compareTo(b.username);
+    });
     return list;
   }
 
@@ -56,8 +63,6 @@ class AppProvider with ChangeNotifier {
   StreamSubscription? _requestsSub;
   StreamSubscription? _notificationsSub;
 
-  // Skip first task-stream emission (initial load); only save on user changes
-  bool _tasksInitialized = false;
 
   AppProvider() {
     _initAuthListener();
@@ -77,7 +82,7 @@ class AppProvider with ChangeNotifier {
         incomingRequests = [];
         productivityRecords = [];
         notifications = [];
-        _tasksInitialized = false;
+        cachedInsight = null;
         notifyListeners();
       } else {
         await _loadOrCreateProfile(firebaseUser);
@@ -95,7 +100,6 @@ class AppProvider with ChangeNotifier {
         username: firebaseUser.displayName ?? firebaseUser.email?.split('@')[0] ?? 'User',
         avatarUrl: firebaseUser.photoURL ?? 'https://i.pravatar.cc/150?img=${userId.hashCode % 70 + 1}',
         streak: 1,
-        score: 100,
         waterIntake: 0,
         friendsIds: [],
       );
@@ -136,15 +140,12 @@ class AppProvider with ChangeNotifier {
       notifyListeners();
     }, onError: (e) => debugPrint('[Firestore] user profile stream error: $e'));
 
-    // 2. Listen to User's Tasks — save productivity snapshot on every change after initial load
-    _tasksInitialized = false;
+    // 2. Listen to User's Tasks — save a productivity snapshot on every emission
+    // including the initial load, so today always has a record even if the user
+    // doesn't toggle any tasks during this session.
     _tasksSub = _dbService.streamTasks(userId).listen((newTasks) {
       tasks = newTasks;
-      if (!_tasksInitialized) {
-        _tasksInitialized = true;
-      } else {
-        _saveProductivityRecord(userId);
-      }
+      _saveProductivityRecord(userId);
       notifyListeners();
       _checkAndHandleOverdueTasks();
     }, onError: (e) => debugPrint('[Firestore] tasks stream error: $e'));
@@ -158,7 +159,6 @@ class AppProvider with ChangeNotifier {
     _logsSub = _dbService.streamLogEntries(userId).listen((newLogs) {
       logs = newLogs;
       notifyListeners();
-      _recomputeLeaderboardScores();
     }, onError: (e) => debugPrint('[Firestore] logs stream error: $e'));
 
     // 4. Leaderboard is friends-only and derived from `currentUser` + `friends`
@@ -182,6 +182,27 @@ class AppProvider with ChangeNotifier {
       notifications = notifList;
       notifyListeners();
     }, onError: (e) => debugPrint('[Firestore] notifications stream error: $e'));
+
+    // 8. Load any cached AI insight once (client-side cache; regenerated on
+    //    demand by the Trends screen when the user's recent data changes).
+    _dbService.getCachedInsight(userId).then((insight) {
+      cachedInsight = insight;
+      notifyListeners();
+    }).catchError((e) {
+      debugPrint('[Firestore] cached insight load error: $e');
+    });
+  }
+
+  /// Persist a freshly generated AI insight to the client-side cache.
+  Future<void> persistInsight(AIInsight insight) async {
+    cachedInsight = insight;
+    final userId = currentUser?.id;
+    if (userId == null) return;
+    try {
+      await _dbService.saveInsight(userId, insight);
+    } catch (e) {
+      debugPrint('[Firestore] save insight error: $e');
+    }
   }
 
   void _cancelSubscriptions() {
@@ -209,28 +230,7 @@ class AppProvider with ChangeNotifier {
         'taskStreak': 0,
         'streak': 1,
       });
-      _recomputeLeaderboardScores();
     }
-  }
-
-  // Recompute mood/sleep leaderboard scores and overall score from current logs.
-  void _recomputeLeaderboardScores() {
-    if (currentUser == null) return;
-    final moodLogs = logs.where((l) => l.moodScore > 0).toList();
-    final sleepLogs = logs.where((l) => l.sleepQuality > 0).toList();
-    final moodScore = moodLogs.isEmpty
-        ? 0.0
-        : moodLogs.map((l) => l.moodScore).reduce((a, b) => a + b) / moodLogs.length;
-    final sleepScore = sleepLogs.isEmpty
-        ? 0.0
-        : sleepLogs.map((l) => l.sleepQuality.toDouble()).reduce((a, b) => a + b) / sleepLogs.length;
-    final taskPts = currentUser!.taskStreak;
-    final overall = (moodScore * 10 + sleepScore * 10 + taskPts).round();
-    _dbService.updateLeaderboardData(currentUser!.id, {
-      'moodLeaderboardScore': moodScore,
-      'sleepLeaderboardScore': sleepScore,
-      'score': overall,
-    });
   }
 
   void _saveProductivityRecord(String userId) {
@@ -409,7 +409,6 @@ class AppProvider with ChangeNotifier {
       if (currentUser != null) {
         final newTaskStreak = (currentUser!.taskStreak + (newStatus ? 1 : -1)).clamp(0, 9999);
         await _dbService.updateLeaderboardData(currentUser!.id, {'taskStreak': newTaskStreak});
-        _recomputeLeaderboardScores();
       }
     }
   }
@@ -520,6 +519,99 @@ class AppProvider with ChangeNotifier {
     }
 
     await checkAndUpdateStreak();
+  }
+
+  // ============================================================
+  // TEMPORARY / DEV-ONLY — remove before shipping.
+  // Seeds ~[days] days of realistic, *correlated* history for the
+  // signed-in user so the trends charts and the Gemini AI insight have
+  // real data to analyze (poor sleep -> lower next-day mood, weekend
+  // mood lift, occasional nightmares, matching emotions/activities, and
+  // task-completion that tracks mood). Writes both `logs` and
+  // `productivity`, sets the streak, and mirrors today's mood.
+  //
+  // Safe to re-run: uses the deterministic {uid}_{date} doc ids, so days
+  // are upserted (no duplicates). Delete this method and its Profile-tab
+  // button once you've generated the demo data.
+  // ============================================================
+  Future<void> seedDemoData({int days = 21}) async {
+    if (currentUser == null) return;
+    final uid = currentUser!.id;
+    final rng = Random(42); // fixed seed -> reproducible dataset
+    final now = DateTime.now();
+    final startOfToday = DateTime(now.year, now.month, now.day);
+
+    const goodEmotions = ['Happy', 'Calm', 'Energetic', 'Motivated'];
+    const badEmotions = ['Anxious', 'Tired', 'Stressed', 'Irritable'];
+    const activities = [
+      'Work', 'Exercise', 'Socializing', 'Study', 'Rest', 'Poor diet'
+    ];
+
+    double prevSleepQuality = 6; // yesterday's sleep drives today's mood
+    double todaysMood = 0;
+
+    for (int i = days - 1; i >= 0; i--) {
+      final date = startOfToday.subtract(Duration(days: i));
+      final isWeekend = date.weekday == DateTime.saturday ||
+          date.weekday == DateTime.sunday;
+
+      final sleepHours =
+          (5.0 + rng.nextDouble() * 3.0 + (isWeekend ? 0.5 : 0.0))
+              .clamp(4.0, 9.5);
+      final sleepQuality = (sleepHours - 2).round().clamp(1, 10);
+
+      // Mood correlates with LAST night's sleep quality + a weekend lift.
+      final mood = (prevSleepQuality * 0.7 +
+              (isWeekend ? 1.5 : 0.0) +
+              rng.nextDouble() * 1.5)
+          .clamp(2.5, 9.5);
+
+      final hadNightmare = sleepQuality <= 4 && rng.nextBool();
+      final pool = mood >= 6.0 ? goodEmotions : badEmotions;
+      final emotions = <String>{
+        pool[rng.nextInt(pool.length)],
+        if (rng.nextBool()) pool[rng.nextInt(pool.length)],
+      }.toList();
+      final trigger = activities[rng.nextInt(activities.length)];
+
+      final total = 3 + rng.nextInt(4); // 3-6 tasks
+      final completed = (total * (mood / 10)).round().clamp(0, total);
+      final rate = completed / total;
+      final dateStr =
+          '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+
+      await _dbService.upsertModeLog(uid, date, {
+        'moodScore': double.parse(mood.toStringAsFixed(1)),
+        'sleepHours': double.parse(sleepHours.toStringAsFixed(1)),
+        'sleepQuality': sleepQuality,
+        'hadNightmare': hadNightmare,
+        'emotions': emotions,
+        'trigger': trigger,
+        'notes': '',
+        'isSharedWithFriends': false,
+      });
+
+      await _dbService.saveProductivityRecord(ProductivityRecord(
+        userId: uid,
+        date: dateStr,
+        completionRate: rate,
+        completedTasks: completed,
+        totalTasks: total,
+      ));
+
+      prevSleepQuality = sleepQuality.toDouble();
+      if (i == 0) todaysMood = mood;
+    }
+
+    // Make the profile look active and mirror today's mood to it.
+    await _dbService.updateStreak(uid, days);
+    if (todaysMood > 0) {
+      await _dbService.updateUserMood(
+          uid, double.parse(todaysMood.toStringAsFixed(1)),
+          User.todayDateString());
+    }
+
+    notifyListeners();
   }
 
   Future<void> toggleLogSharing(LogEntry log) async {

@@ -1,7 +1,22 @@
 {
   "permissions": {
     "allow": [
-      "Bash(flutter analyze *)"
+      "Bash(flutter analyze *)",
+      "WebFetch(domain:github.com)",
+      "Bash(gh api *)",
+      "PowerShell(Get-Content \"$env:USERPROFILE\\\\.claude.json\" -Raw 2>$null | Select-String \"notebooklm\" -SimpleMatch -Quiet)",
+      "Bash(cmd /c \"npx notebooklm-mcp@latest\")",
+      "mcp__notebooklm__add_notebook",
+      "mcp__notebooklm__get_health",
+      "mcp__notebooklm__re_auth",
+      "mcp__e6de2266-9d0d-4abc-999d-31c4209355a4__search",
+      "WebSearch",
+      "WebFetch(domain:www.frontiersin.org)",
+      "WebFetch(domain:link.springer.com)",
+      "WebFetch(domain:arxiv.org)",
+      "WebFetch(domain:www.tandfonline.com)",
+      "WebFetch(domain:www.mdpi.com)",
+      "WebFetch(domain:www.researchgate.net)"
     ]
   }
 }

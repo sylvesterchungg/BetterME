@@ -69,6 +69,18 @@ service cloud.firestore {
           : resource.data.userId == request.auth.uid);
     }
 
+    // ── AI Insight Cache ──────────────────────────────────────────────────────
+    // Owner-only cache of the latest AI-generated insight (one doc per user).
+    // Read allows the not-yet-created doc (empty snapshot) so the first get()
+    // before any insight exists isn't denied.
+    match /insights/{insightId} {
+      allow read: if request.auth != null &&
+        (resource == null || resource.data.userId == request.auth.uid);
+      allow write: if request.auth != null &&
+        request.resource.data.userId == request.auth.uid &&
+        (resource == null || resource.data.userId == request.auth.uid);
+    }
+
     // ── In-App Notifications (FR_902, FR_903) ─────────────────────────────────
     // Any authenticated user can create a notification (so accepting a friend
     // request can write a notification for the other party).

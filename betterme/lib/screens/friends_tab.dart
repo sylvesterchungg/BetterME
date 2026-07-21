@@ -14,7 +14,6 @@ class FriendsTab extends StatefulWidget {
 
 class _FriendsTabState extends State<FriendsTab> {
   final TextEditingController _searchController = TextEditingController();
-  int _leaderboardIndex = 0; // 0=Overall 1=Mood 2=Sleep 3=Tasks
 
   void _handleSendRequest(AppProvider provider) async {
     final username = _searchController.text.trim();
@@ -529,36 +528,14 @@ class _FriendsTabState extends State<FriendsTab> {
   }
 
   Widget _buildLeaderboardCard(BuildContext context, AppProvider provider) {
-    final allUsers = provider.leaderboard; // current user + friends
+    // Friends-only leaderboard ranked by streak (FR_505 / LeaderboardEntry).
+    // `provider.leaderboard` is already streak-sorted with a username tiebreak.
+    final sorted = provider.leaderboard; // current user + friends
     final currentUser = provider.currentUser;
     final currentUserId = currentUser?.id;
+    String subtitle(User u) => '${u.streak}d streak';
 
-    // Sort and compute display values based on selected tab
-    final tabs = [
-      (label: 'Overall', icon: Icons.leaderboard_outlined),
-      (label: 'Mood', icon: Icons.mood),
-      (label: 'Sleep', icon: Icons.bedtime_outlined),
-      (label: 'Tasks', icon: Icons.task_alt),
-    ];
-
-    List<User> sorted;
-    String Function(User) subtitle;
-    switch (_leaderboardIndex) {
-      case 1:
-        sorted = List.of(allUsers)..sort((a, b) => b.moodLeaderboardScore.compareTo(a.moodLeaderboardScore));
-        subtitle = (u) => '${u.moodLeaderboardScore.toStringAsFixed(1)} / 10 avg mood';
-      case 2:
-        sorted = List.of(allUsers)..sort((a, b) => b.sleepLeaderboardScore.compareTo(a.sleepLeaderboardScore));
-        subtitle = (u) => '${u.sleepLeaderboardScore.toStringAsFixed(1)} / 10 sleep quality';
-      case 3:
-        sorted = List.of(allUsers)..sort((a, b) => b.taskStreak.compareTo(a.taskStreak));
-        subtitle = (u) => '${u.taskStreak} tasks completed';
-      default: // 0 — Overall
-        sorted = List.of(allUsers)..sort((a, b) => b.score.compareTo(a.score));
-        subtitle = (u) => '${u.score} pts · ${u.streak}d streak';
-    }
-
-    final myRank = sorted.indexWhere((u) => u.id == currentUserId) + 1;
+    final myRank = provider.myLeaderboardRank;
     final userInList = sorted.any((u) => u.id == currentUserId);
 
     return Container(
@@ -585,44 +562,10 @@ class _FriendsTabState extends State<FriendsTab> {
               Text('Friends Leaderboard', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
             ],
           ),
-          const SizedBox(height: 14),
-          // Tab selector
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(
-              children: tabs.asMap().entries.map((e) {
-                final i = e.key;
-                final tab = e.value;
-                final selected = _leaderboardIndex == i;
-                return GestureDetector(
-                  onTap: () => setState(() => _leaderboardIndex = i),
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 180),
-                    margin: const EdgeInsets.only(right: 8),
-                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
-                    decoration: BoxDecoration(
-                      color: selected ? AppTheme.primary : AppTheme.surfaceContainerHighest,
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(tab.icon, size: 14, color: selected ? Colors.white : AppTheme.onSurfaceVariant),
-                        const SizedBox(width: 5),
-                        Text(
-                          tab.label,
-                          style: TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,
-                            color: selected ? Colors.white : AppTheme.onSurfaceVariant,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                );
-              }).toList(),
-            ),
+          const SizedBox(height: 4),
+          const Text(
+            'Ranked by daily streak',
+            style: TextStyle(fontSize: 13, color: AppTheme.onSurfaceVariant),
           ),
           const SizedBox(height: 16),
           if (sorted.isEmpty)

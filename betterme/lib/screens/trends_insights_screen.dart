@@ -26,6 +26,8 @@ class TrendsInsightsScreen extends StatelessWidget {
             const SizedBox(height: 24),
             _buildWeeklyTrends(logs, productivityRecords),
             const SizedBox(height: 24),
+            _buildCorrelations(logs, productivityRecords),
+            const SizedBox(height: 24),
             _buildDeepInsights(logs, productivityRecords),
             const SizedBox(height: 24),
             _buildTopEmotions(logs),
@@ -143,6 +145,267 @@ class TrendsInsightsScreen extends StatelessWidget {
         ),
       ],
     );
+  }
+
+  // ══════════════════════════════ CORRELATIONS ══════════════════════════════
+
+  String _dayKey(DateTime d) =>
+      '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+
+  /// Pearson correlation over two aligned lists; null if fewer than 3 pairs or
+  /// a series has no variance.
+  double? _pearson(List<double> xs, List<double> ys) {
+    final n = xs.length;
+    if (n < 3) return null;
+    final mx = xs.reduce((a, b) => a + b) / n;
+    final my = ys.reduce((a, b) => a + b) / n;
+    double num = 0, dx = 0, dy = 0;
+    for (int i = 0; i < n; i++) {
+      num += (xs[i] - mx) * (ys[i] - my);
+      dx += (xs[i] - mx) * (xs[i] - mx);
+      dy += (ys[i] - my) * (ys[i] - my);
+    }
+    if (dx == 0 || dy == 0) return null;
+    return (num / math.sqrt(dx * dy)).clamp(-1.0, 1.0);
+  }
+
+  String _fmt(double c) => '${c >= 0 ? '+' : ''}${c.toStringAsFixed(2)}';
+
+  String _strengthLabel(double c) {
+    final mag = c.abs();
+    final dir = c >= 0 ? 'positive' : 'negative';
+    if (mag >= 0.6) return 'Strong $dir';
+    if (mag >= 0.3) return 'Moderate $dir';
+    if (mag >= 0.1) return 'Weak $dir';
+    return 'No clear link';
+  }
+
+  Widget _buildCorrelations(
+      List<LogEntry> logs, List<ProductivityRecord> productivityRecords) {
+    final recordMap = {for (var r in productivityRecords) r.date: r};
+
+    final sleepMoodX = <double>[], sleepMoodY = <double>[];
+    final sleepProdX = <double>[], sleepProdY = <double>[];
+    final moodProdX = <double>[], moodProdY = <double>[];
+
+    for (final log in logs) {
+      final hasSleep = log.sleepHours > 0;
+      final hasMood = log.moodScore > 0;
+      final rec = recordMap[_dayKey(log.date)];
+      final hasProd = rec != null;
+
+      if (hasSleep && hasMood) {
+        sleepMoodX.add(log.sleepHours);
+        sleepMoodY.add(log.moodScore);
+      }
+      if (hasSleep && hasProd) {
+        sleepProdX.add(log.sleepHours);
+        sleepProdY.add(rec.completionRate);
+      }
+      if (hasMood && hasProd) {
+        moodProdX.add(log.moodScore);
+        moodProdY.add(rec.completionRate);
+      }
+    }
+
+    final pairs = <({String a, String b, double? c})>[
+      (a: 'Sleep', b: 'Mood', c: _pearson(sleepMoodX, sleepMoodY)),
+      (a: 'Sleep', b: 'Productivity', c: _pearson(sleepProdX, sleepProdY)),
+      (a: 'Mood', b: 'Productivity', c: _pearson(moodProdX, moodProdY)),
+    ];
+
+    final hasAny = pairs.any((p) => p.c != null);
+    final sampleDays = sleepMoodX.length;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text('How They Interact',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+        const SizedBox(height: 16),
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: AppTheme.borderDefault),
+            boxShadow: [
+              BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.05),
+                  blurRadius: 12,
+                  offset: const Offset(0, 4))
+            ],
+          ),
+          child: hasAny
+              ? Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    for (int i = 0; i < pairs.length; i++) ...[
+                      _buildCorrelationRow(pairs[i]),
+                      if (i < pairs.length - 1) const SizedBox(height: 18),
+                    ],
+                    const SizedBox(height: 20),
+                    Container(height: 1, color: AppTheme.borderDefault),
+                    const SizedBox(height: 16),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Icon(Icons.auto_awesome,
+                            size: 18, color: AppTheme.primary),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            _correlationParagraph(pairs, sampleDays),
+                            style: const TextStyle(
+                                fontSize: 14,
+                                color: AppTheme.onSurfaceVariant,
+                                height: 1.5),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                )
+              : const Text(
+                  'Keep logging sleep, mood, and completing tasks for a few days to reveal how they interact.',
+                  style: TextStyle(color: AppTheme.outline),
+                ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildCorrelationRow(({String a, String b, double? c}) pair) {
+    final c = pair.c;
+    final label = c == null ? 'Not enough data' : _strengthLabel(c);
+    final valueColor = c == null
+        ? AppTheme.outline
+        : (c >= 0 ? AppTheme.primary : AppTheme.error);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text('${pair.a} ↔ ${pair.b}',
+                style: const TextStyle(
+                    fontSize: 14, fontWeight: FontWeight.w600)),
+            Text(c == null ? '—' : _fmt(c),
+                style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                    color: valueColor)),
+          ],
+        ),
+        const SizedBox(height: 6),
+        _buildDivergingBar(c),
+        const SizedBox(height: 4),
+        Text(label,
+            style: const TextStyle(fontSize: 11, color: AppTheme.outline)),
+      ],
+    );
+  }
+
+  /// Center-anchored bar: negative fills left (red), positive fills right (primary).
+  Widget _buildDivergingBar(double? c) {
+    final v = (c ?? 0.0).clamp(-1.0, 1.0);
+    return SizedBox(
+      height: 10,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Expanded(
+            child: Align(
+              alignment: Alignment.centerRight,
+              child: FractionallySizedBox(
+                widthFactor: v < 0 ? v.abs() : 0.0,
+                child: Container(
+                  decoration: const BoxDecoration(
+                    color: AppTheme.error,
+                    borderRadius:
+                        BorderRadius.horizontal(left: Radius.circular(5)),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          Container(width: 2, color: AppTheme.borderDefault),
+          Expanded(
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: FractionallySizedBox(
+                widthFactor: v > 0 ? v : 0.0,
+                child: Container(
+                  decoration: const BoxDecoration(
+                    color: AppTheme.primary,
+                    borderRadius:
+                        BorderRadius.horizontal(right: Radius.circular(5)),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Deterministic, rule-based summary of the correlations — no AI model.
+  String _correlationParagraph(
+      List<({String a, String b, double? c})> pairs, int sampleDays) {
+    final valid = pairs.where((p) => p.c != null).toList()
+      ..sort((x, y) => y.c!.abs().compareTo(x.c!.abs()));
+
+    if (valid.isEmpty) {
+      return 'Keep logging to reveal how your sleep, mood, and productivity move together.';
+    }
+
+    String clause(({String a, String b, double? c}) p) {
+      final c = p.c!;
+      final mag = c.abs();
+      final adverb =
+          mag >= 0.6 ? 'strongly' : (mag >= 0.3 ? 'moderately' : 'only weakly');
+      final a = p.a.toLowerCase();
+      final b = p.b.toLowerCase();
+      return c >= 0
+          ? '$a and $b $adverb rise and fall together (${_fmt(c)})'
+          : '$a and $b $adverb move in opposite directions (${_fmt(c)})';
+    }
+
+    final clauses = valid.map(clause).toList();
+    final String body;
+    if (clauses.length == 1) {
+      body = clauses[0];
+    } else {
+      body =
+          '${clauses.sublist(0, clauses.length - 1).join('; ')}; and ${clauses.last}';
+    }
+
+    // Actionable tip from the strongest relationship.
+    final top = valid.first;
+    final tc = top.c!;
+    String tip;
+    if (tc.abs() < 0.3) {
+      tip =
+          'None of these links are strong yet — a few more days of logging will sharpen the picture.';
+    } else if (top.a == 'Sleep' && top.b == 'Mood') {
+      tip = tc >= 0
+          ? 'Protecting your sleep looks like your clearest lever for a better mood.'
+          : 'Longer nights are lining up with lower moods — worth watching for oversleeping on rough days.';
+    } else if (top.b == 'Productivity') {
+      tip = tc >= 0
+          ? 'On days your ${top.a.toLowerCase()} is higher, you tend to finish more of your tasks.'
+          : 'Higher ${top.a.toLowerCase()} is coinciding with fewer tasks done — an interesting pattern to reflect on.';
+    } else {
+      tip = 'This is the pattern worth paying the most attention to.';
+    }
+
+    final dayWord = sampleDays == 1 ? 'day' : 'days';
+    final lead = sampleDays >= 3
+        ? 'Across your $sampleDays logged $dayWord, '
+        : 'From your recent logs, ';
+    return '$lead$body. $tip';
   }
 
   Widget _buildMiniBarSection({

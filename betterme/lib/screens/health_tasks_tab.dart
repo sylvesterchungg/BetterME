@@ -211,8 +211,6 @@ class _HealthTasksTabState extends State<HealthTasksTab> {
                   _buildAllTasksSection(context, provider, allCategories),
                   const SizedBox(height: 16),
                   _buildHydrationCategory(context, provider),
-                  const SizedBox(height: 16),
-                  _buildPhysicalActivityCategory(context, provider),
                   const SizedBox(height: 24),
                   _buildAtmosphericBanner(context),
                   const SizedBox(height: 80),
@@ -631,112 +629,6 @@ class _HealthTasksTabState extends State<HealthTasksTab> {
             ],
           ),
         ],
-      ),
-    );
-  }
-
-  Widget _buildPhysicalActivityCategory(
-    BuildContext context,
-    AppProvider provider,
-  ) {
-    final steps = provider.currentSteps;
-    const stepGoal = 10000;
-
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppTheme.borderDefault),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Row(
-                children: [
-                  const Icon(Icons.directions_run, color: AppTheme.tertiary),
-                  const SizedBox(width: 8),
-                  const Text(
-                    'Physical Activity',
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
-                  ),
-                ],
-              ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                decoration: BoxDecoration(
-                  color: AppTheme.tertiaryFixed,
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: Text(
-                  'Goal: ${stepGoal ~/ 1000}k steps',
-                  style: const TextStyle(
-                    fontSize: 12,
-                    color: AppTheme.onTertiaryFixed,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.baseline,
-            textBaseline: TextBaseline.alphabetic,
-            children: [
-              Text(
-                NumberFormat('#,###').format(steps),
-                style: const TextStyle(fontSize: 32, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(width: 8),
-              const Text(
-                'steps today',
-                style: TextStyle(fontSize: 14, color: AppTheme.onSurfaceVariant),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              _buildGraphBar(40, false),
-              _buildGraphBar(60, false),
-              _buildGraphBar(80, false),
-              _buildGraphBar(50, false),
-              _buildGraphBar(30, false),
-              _buildGraphBar(70, false),
-              _buildGraphBar(64, true),
-            ],
-          ),
-          const SizedBox(height: 8),
-          const Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text('M', style: TextStyle(fontSize: 10, color: AppTheme.outline)),
-              Text('T', style: TextStyle(fontSize: 10, color: AppTheme.outline)),
-              Text('W', style: TextStyle(fontSize: 10, color: AppTheme.outline)),
-              Text('T', style: TextStyle(fontSize: 10, color: AppTheme.outline)),
-              Text('F', style: TextStyle(fontSize: 10, color: AppTheme.outline)),
-              Text('S', style: TextStyle(fontSize: 10, color: AppTheme.outline)),
-              Text('S', style: TextStyle(fontSize: 10, color: AppTheme.primary, fontWeight: FontWeight.bold)),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildGraphBar(double height, bool isToday) {
-    return Container(
-      width: 32,
-      height: height,
-      decoration: BoxDecoration(
-        color: isToday ? AppTheme.primaryContainer : AppTheme.surfaceContainer,
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(4)),
       ),
     );
   }

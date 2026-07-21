@@ -1,5 +1,7 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import '../providers/app_provider.dart';
 import '../models/models.dart';
@@ -359,6 +361,28 @@ class _PersonalDiaryScreenState extends State<PersonalDiaryScreen> {
               ),
             ),
 
+          // Photo
+          if (log.photoUrl.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: Image.network(
+                  log.photoUrl,
+                  width: double.infinity,
+                  height: 180,
+                  fit: BoxFit.cover,
+                  errorBuilder: (context, error, stackTrace) => Container(
+                    height: 180,
+                    color: AppTheme.surfaceContainer,
+                    child: const Center(
+                      child: Icon(Icons.broken_image_outlined, color: AppTheme.outlineVariant),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+
           const SizedBox(height: 14),
         ],
       ),
@@ -466,6 +490,25 @@ class _PersonalDiaryScreenState extends State<PersonalDiaryScreen> {
               overflow: TextOverflow.ellipsis,
             ),
           ],
+          if (log.photoUrl.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: Image.network(
+                log.photoUrl,
+                width: double.infinity,
+                height: 160,
+                fit: BoxFit.cover,
+                errorBuilder: (context, error, stackTrace) => Container(
+                  height: 160,
+                  color: AppTheme.surfaceContainer,
+                  child: const Center(
+                    child: Icon(Icons.broken_image_outlined, color: AppTheme.outlineVariant),
+                  ),
+                ),
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -531,7 +574,10 @@ class _EditJournalSheetState extends State<_EditJournalSheet> {
   late final TextEditingController _notesCtrl;
   late final TextEditingController _triggerCtrl;
   late final Set<String> _emotions;
+  late String _photoUrl;
   bool _saving = false;
+  bool _uploadingPhoto = false;
+  final ImagePicker _picker = ImagePicker();
 
   @override
   void initState() {
@@ -546,6 +592,28 @@ class _EditJournalSheetState extends State<_EditJournalSheet> {
     _notesCtrl = TextEditingController(text: log?.notes ?? '');
     _triggerCtrl = TextEditingController(text: log?.trigger ?? '');
     _emotions = {...(log?.emotions ?? const [])};
+    _photoUrl = log?.photoUrl ?? '';
+  }
+
+  Future<void> _pickPhoto() async {
+    if (_uploadingPhoto) return;
+    final XFile? image =
+        await _picker.pickImage(source: ImageSource.gallery, imageQuality: 85);
+    if (image == null) return;
+
+    setState(() => _uploadingPhoto = true);
+    try {
+      final url =
+          await widget.provider.uploadJournalPhoto(File(image.path), _date);
+      if (mounted) setState(() => _photoUrl = url);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Failed to upload photo: $e')));
+      }
+    } finally {
+      if (mounted) setState(() => _uploadingPhoto = false);
+    }
   }
 
   @override
@@ -567,6 +635,7 @@ class _EditJournalSheetState extends State<_EditJournalSheet> {
       'notes': _notesCtrl.text.trim(),
       'trigger': _triggerCtrl.text.trim(),
       'emotions': _emotions.toList(),
+      'photoUrl': _photoUrl,
     };
     await widget.provider.saveLogFields(_date, fields);
     if (mounted) Navigator.of(context).pop();
@@ -689,6 +758,11 @@ class _EditJournalSheetState extends State<_EditJournalSheet> {
                 ),
                 const SizedBox(height: 16),
 
+                const Text('Photo', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppTheme.onSurface)),
+                const SizedBox(height: 8),
+                _buildPhotoField(),
+                const SizedBox(height: 16),
+
                 const Text('Notes', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppTheme.onSurface)),
                 const SizedBox(height: 8),
                 TextField(
@@ -742,6 +816,94 @@ class _EditJournalSheetState extends State<_EditJournalSheet> {
           Text(value, style: const TextStyle(fontSize: 13, color: AppTheme.outline)),
         ],
       ),
+    );
+  }
+
+  Widget _buildPhotoField() {
+    final hasPhoto = _photoUrl.isNotEmpty;
+
+    if (_uploadingPhoto) {
+      return Container(
+        height: 160,
+        decoration: BoxDecoration(
+          color: AppTheme.surfaceContainerLow,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: AppTheme.borderDefault),
+        ),
+        child: const Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              CircularProgressIndicator(strokeWidth: 2, color: AppTheme.primary),
+              SizedBox(height: 8),
+              Text('Uploading…', style: TextStyle(fontSize: 12, color: AppTheme.outline)),
+            ],
+          ),
+        ),
+      );
+    }
+
+    if (!hasPhoto) {
+      return OutlinedButton.icon(
+        onPressed: _pickPhoto,
+        icon: const Icon(Icons.add_a_photo_outlined, size: 18),
+        label: const Text('Add a photo'),
+        style: OutlinedButton.styleFrom(
+          padding: const EdgeInsets.symmetric(vertical: 14),
+          minimumSize: const Size(double.infinity, 0),
+          side: const BorderSide(color: AppTheme.borderDefault),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        ),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        ClipRRect(
+          borderRadius: BorderRadius.circular(12),
+          child: Image.network(
+            _photoUrl,
+            height: 180,
+            fit: BoxFit.cover,
+            errorBuilder: (context, error, stackTrace) => Container(
+              height: 180,
+              color: AppTheme.surfaceContainer,
+              child: const Center(
+                child: Icon(Icons.broken_image_outlined, color: AppTheme.outlineVariant),
+              ),
+            ),
+            loadingBuilder: (context, child, progress) => progress == null
+                ? child
+                : Container(
+                    height: 180,
+                    color: AppTheme.surfaceContainerLow,
+                    child: const Center(
+                      child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.primary),
+                    ),
+                  ),
+          ),
+        ),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Expanded(
+              child: TextButton.icon(
+                onPressed: _pickPhoto,
+                icon: const Icon(Icons.swap_horiz, size: 18),
+                label: const Text('Replace'),
+              ),
+            ),
+            Expanded(
+              child: TextButton.icon(
+                onPressed: () => setState(() => _photoUrl = ''),
+                icon: const Icon(Icons.delete_outline, size: 18, color: AppTheme.error),
+                label: const Text('Remove', style: TextStyle(color: AppTheme.error)),
+              ),
+            ),
+          ],
+        ),
+      ],
     );
   }
 }

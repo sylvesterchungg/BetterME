@@ -6,7 +6,6 @@ import 'dashboard_tab.dart';
 import 'daily_log_tab.dart';
 import 'health_tasks_tab.dart';
 import 'friends_tab.dart';
-import 'profile_tab.dart';
 import 'trends_insights_screen.dart';
 import 'personal_diary_screen.dart';
 
@@ -47,7 +46,6 @@ class _MainScreenState extends State<MainScreen> {
     const HealthTasksTab(),
     const FriendsTab(),
     const PersonalDiaryScreen(),
-    const ProfileTab(),
   ];
 
   @override
@@ -88,7 +86,6 @@ class _MainScreenState extends State<MainScreen> {
               icon: Icon(Icons.edit_note),
               label: 'Journal',
             ),
-            BottomNavigationBarItem(icon: Icon(Icons.person), label: 'Profile'),
           ],
         ),
       ),

@@ -1,10 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../providers/app_provider.dart';
 import '../theme.dart';
 import 'dashboard_tab.dart';
 import 'daily_log_tab.dart';
 import 'health_tasks_tab.dart';
 import 'friends_tab.dart';
-import 'profile_tab.dart';
 import 'trends_insights_screen.dart';
 import 'personal_diary_screen.dart';
 
@@ -18,6 +19,26 @@ class MainScreen extends StatefulWidget {
 class _MainScreenState extends State<MainScreen> {
   int _currentIndex = 0;
 
+  // Tracks the avatar URL already warmed into the image cache so we only
+  // precache once per URL change instead of on every rebuild.
+  String? _preloadedAvatarUrl;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _preloadAvatar();
+  }
+
+  // Preload the user's avatar into Flutter's image cache as soon as it's
+  // available, so the Profile/Dashboard/Friends tabs show it instantly
+  // instead of fetching over the network when first opened.
+  void _preloadAvatar() {
+    final url = Provider.of<AppProvider>(context).currentUser?.avatarUrl;
+    if (url == null || url.isEmpty || url == _preloadedAvatarUrl) return;
+    _preloadedAvatarUrl = url;
+    precacheImage(NetworkImage(url), context);
+  }
+
   final List<Widget> _tabs = [
     const DashboardTab(),
     const TrendsInsightsScreen(),
@@ -25,7 +46,6 @@ class _MainScreenState extends State<MainScreen> {
     const HealthTasksTab(),
     const FriendsTab(),
     const PersonalDiaryScreen(),
-    const ProfileTab(),
   ];
 
   @override
@@ -35,7 +55,7 @@ class _MainScreenState extends State<MainScreen> {
       bottomNavigationBar: Container(
         decoration: const BoxDecoration(
           color: Colors.white,
-          border: Border(top: BorderSide(color: Color(0xFFE2E8F0), width: 1)),
+          border: Border(top: BorderSide(color: AppTheme.borderDefault, width: 1)),
         ),
         child: BottomNavigationBar(
           currentIndex: _currentIndex,
@@ -66,7 +86,6 @@ class _MainScreenState extends State<MainScreen> {
               icon: Icon(Icons.edit_note),
               label: 'Journal',
             ),
-            BottomNavigationBarItem(icon: Icon(Icons.person), label: 'Profile'),
           ],
         ),
       ),

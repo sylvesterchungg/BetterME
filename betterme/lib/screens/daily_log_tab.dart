@@ -1,8 +1,27 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../providers/app_provider.dart';
 import '../models/models.dart';
+import '../providers/app_provider.dart';
 import '../theme.dart';
+
+// Symptom options shown in the Track Symptoms chip row
+const _kSymptoms = [
+  (name: 'Anxiety', icon: Icons.psychology),
+  (name: 'Fatigue', icon: Icons.bolt),
+  (name: 'Headache', icon: Icons.headset_off),
+  (name: 'Nausea', icon: Icons.sick),
+  (name: 'Pain', icon: Icons.warning_amber),
+];
+
+// Activity options shown in "What have you been up to?"
+const _kActivities = ['Work', 'Relaxing', 'Exercise', 'Social', 'Hobbies'];
+const _kKnownActivities = {'Work', 'Relaxing', 'Exercise', 'Social', 'Hobbies'};
+
+// Sleep quality levels (index 0-4 → sleepQuality values 2,4,6,8,10)
+const _kSleepQualityLabels = ['Restless', 'Poor', 'Good', 'Solid', 'Deep'];
+
+// Severity levels (1-5)
+const _kSeverityLabels = ['Mild', 'Low', 'Moderate', 'High', 'Severe'];
 
 class DailyLogTab extends StatefulWidget {
   const DailyLogTab({super.key});
@@ -12,153 +31,203 @@ class DailyLogTab extends StatefulWidget {
 }
 
 class _DailyLogTabState extends State<DailyLogTab> {
-  // Mode Selection: 'mood' or 'sleep'
+  // ── Mode ──────────────────────────────────────────────
   String _logMode = 'mood';
 
-  // Mood State
+  // ── Mood ──────────────────────────────────────────────
   String? _selectedMoodEmoji;
-  double _moodScore = 5.0; // Slider value 1.0 to 10.0
+  double _moodScore = 5.0;
+
+  // ── Activities ────────────────────────────────────────
   final Set<String> _selectedActivities = {};
-  final Map<String, bool> _symptoms = {
-    'Headache': false,
-    'Fatigue': false,
-    'Anxiety': false,
-    'Pain': false,
-  };
+  bool _showOthersInput = false;
+  final TextEditingController _othersController = TextEditingController();
 
-  // Sleep State
-  double _sleepHours = 7.0; // Slider value 0.0 to 24.0
+  // ── Symptoms ──────────────────────────────────────────
+  final Set<String> _selectedSymptoms = {};
+  int _symptomSeverity = 3; // 1 = Mild … 5 = Severe
+  final TextEditingController _symptomNotesController = TextEditingController();
 
+  // ── Sleep ─────────────────────────────────────────────
+  double _sleepHours = 7.0;
+  int _sleepQuality = 0; // 0 = unset; 2,4,6,8,10 for Restless→Deep
+  bool _hadNightmare = false;
 
-  void _toggleActivity(String activity) {
+  // ── Pre-population tracking ───────────────────────────
+  String _loadedForDate = '';
+  double _prevMoodScore = 0.0;
+  double _prevSleepHours = 0.0;
+
+  @override
+  void dispose() {
+    _othersController.dispose();
+    _symptomNotesController.dispose();
+    super.dispose();
+  }
+
+  // ─────────────────────────────── HELPERS ───────────────────────────────
+
+  String _severityLabel(int v) => _kSeverityLabels[(v - 1).clamp(0, 4)];
+
+  int _severityFromLabel(String label) {
+    final idx = _kSeverityLabels.indexOf(label);
+    return idx >= 0 ? idx + 1 : 3;
+  }
+
+  void _parseSavedNotes(String notes) {
+    if (notes.startsWith('Severity:')) {
+      final nl = notes.indexOf('\n');
+      final severityLine = nl >= 0 ? notes.substring(0, nl) : notes;
+      _symptomSeverity = _severityFromLabel(severityLine.replaceFirst('Severity:', '').trim());
+      _symptomNotesController.text = nl >= 0 ? notes.substring(nl + 1).trim() : '';
+    } else {
+      _symptomNotesController.text = notes;
+    }
+  }
+
+  // ─────────────────────────────── LOAD TODAY ────────────────────────────
+
+  void _loadTodayValues(AppProvider provider) {
+    final now = DateTime.now();
+    LogEntry? todayLog;
+    for (final l in provider.logs) {
+      if (l.date.year == now.year && l.date.month == now.month && l.date.day == now.day) {
+        todayLog = l;
+        break;
+      }
+    }
+    if (todayLog == null) return;
+
     setState(() {
-      if (_selectedActivities.contains(activity)) {
-        _selectedActivities.remove(activity);
-      } else {
-        _selectedActivities.add(activity);
+      // ── Mood ──
+      if (todayLog!.moodScore > 0) {
+        _moodScore = todayLog.moodScore;
+        _prevMoodScore = todayLog.moodScore;
+        final s = todayLog.moodScore;
+        _selectedMoodEmoji = s <= 2.0 ? 'awful' : s <= 4.0 ? 'bad' : s <= 6.0 ? 'meh' : s <= 8.5 ? 'good' : 'great';
+      }
+
+      // ── Activities ──
+      _selectedActivities.clear();
+      _showOthersInput = false;
+      _othersController.text = '';
+      final customActs = <String>[];
+      for (final act in todayLog.trigger.split(', ').where((s) => s.isNotEmpty)) {
+        if (_kKnownActivities.contains(act)) {
+          _selectedActivities.add(act);
+        } else {
+          customActs.add(act);
+        }
+      }
+      if (customActs.isNotEmpty) {
+        _selectedActivities.add('Others');
+        _othersController.text = customActs.join(', ');
+        _showOthersInput = true;
+      }
+
+      // ── Symptoms ──
+      _selectedSymptoms.clear();
+      _selectedSymptoms.addAll(todayLog.emotions);
+      _parseSavedNotes(todayLog.notes);
+
+      // ── Sleep ──
+      if (todayLog.sleepHours > 0) {
+        _sleepHours = todayLog.sleepHours;
+        _prevSleepHours = todayLog.sleepHours;
+        _sleepQuality = todayLog.sleepQuality;
+        _hadNightmare = todayLog.hadNightmare;
       }
     });
   }
 
+  // ─────────────────────────────── SAVE ──────────────────────────────────
+
   Future<void> _saveLog() async {
     final provider = context.read<AppProvider>();
 
-    // Check if a log for today already exists
-    final now = DateTime.now();
-    LogEntry? existingLog;
-    try {
-      existingLog = provider.logs.firstWhere((log) {
-        return log.date.year == now.year &&
-               log.date.month == now.month &&
-               log.date.day == now.day;
-      });
-    } catch (e) {
-      existingLog = null;
-    }
+    if (_logMode == 'mood') {
+      final newScore = _moodScore.clamp(1.0, 10.0);
+      final prevForDisplay = _prevMoodScore;
+      final hasMoodChange = _prevMoodScore > 0 && _prevMoodScore != newScore;
 
-    if (existingLog != null) {
-      if (!mounted) return;
-      showDialog(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          title: const Text('Log Already Exists'),
-          content: const Text('You have already logged data for today. Would you like to update the existing log or add a new separate entry?'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('Cancel'),
-            ),
-            TextButton(
-              onPressed: () {
-                Navigator.pop(ctx);
-                _executeSaveLog(provider, false, null);
-              },
-              child: const Text('Add New'),
-            ),
-            ElevatedButton(
-              onPressed: () {
-                Navigator.pop(ctx);
-                _executeSaveLog(provider, true, existingLog);
-              },
-              child: const Text('Update'),
-            ),
-          ],
-        ),
-      );
-    } else {
-      await _executeSaveLog(provider, false, null);
-    }
-  }
-
-  Future<void> _executeSaveLog(AppProvider provider, bool isUpdate, LogEntry? existingLog) async {
-    final notes = 'Logged via ${_logMode == 'mood' ? 'Mood' : 'Sleep'} tab';
-
-    final activeSymptoms = _symptoms.entries
-        .where((e) => e.value)
-        .map((e) => e.key)
-        .toList();
-
-    // Only overwrite the dimension belonging to the current mode; preserve the
-    // other dimension (and its associated fields) from the existing log so that
-    // logging sleep doesn't wipe out a previously recorded mood, and vice-versa.
-    final double finalMoodScore =
-        _logMode == 'mood' ? _moodScore : (existingLog?.moodScore ?? 0.0);
-    final double finalSleepHours =
-        _logMode == 'sleep' ? _sleepHours : (existingLog?.sleepHours ?? 0.0);
-
-    // emotions/trigger are mood-only inputs; keep prior values when logging sleep
-    final List<String> finalEmotions =
-        _logMode == 'mood' ? activeSymptoms : (existingLog?.emotions ?? const []);
-    final String finalTrigger = _logMode == 'mood'
-        ? _selectedActivities.join(', ')
-        : (existingLog?.trigger ?? '');
-
-    final entry = LogEntry(
-      id: existingLog?.id ?? '',
-      date: DateTime.now(),
-      sleepHours: finalSleepHours,
-      moodScore: finalMoodScore,
-      emotions: finalEmotions,
-      notes: notes,
-      trigger: finalTrigger,
-    );
-
-    if (isUpdate) {
-      await provider.updateLog(entry);
-    } else {
-      await provider.addLog(entry);
-    }
-
-    _showSuccessSnackbar();
-  }
-
-  void _showSuccessSnackbar() {
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('$_logMode entry saved successfully!'),
-          backgroundColor: AppTheme.primary,
-        ),
-      );
-
-      // Optionally reset state
-      if (_logMode == 'mood') {
-        setState(() {
-          _selectedMoodEmoji = null;
-          _moodScore = 5.0;
-          _selectedActivities.clear();
-          _symptoms.updateAll((key, value) => false);
-        });
-      } else if (_logMode == 'sleep') {
-        setState(() {
-          _sleepHours = 7.0;
-        });
+      // Resolve custom activity
+      final allActivities = Set<String>.from(_selectedActivities);
+      if (allActivities.contains('Others')) {
+        allActivities.remove('Others');
+        final custom = _othersController.text.trim();
+        if (custom.isNotEmpty) allActivities.add(custom);
       }
+
+      // Build notes string (severity + free text) — saved to journal via LogEntry.notes
+      String notesText = '';
+      if (_selectedSymptoms.isNotEmpty) {
+        notesText = 'Severity: ${_severityLabel(_symptomSeverity)}';
+        final userNotes = _symptomNotesController.text.trim();
+        if (userNotes.isNotEmpty) notesText += '\n$userNotes';
+      } else {
+        notesText = _symptomNotesController.text.trim();
+      }
+
+      await provider.upsertModeLog({
+        'previousMoodScore': hasMoodChange ? _prevMoodScore : 0.0,
+        'moodScore': newScore,
+        'emotions': _selectedSymptoms.toList(),
+        'trigger': allActivities.join(', '),
+        'notes': notesText,
+      });
+
+      setState(() => _prevMoodScore = newScore);
+      _showSuccessSnackbar(hasMoodChange ? prevForDisplay : null, null);
+    } else {
+      final newHours = _sleepHours.clamp(0.0, 24.0);
+      final prevForDisplay = _prevSleepHours;
+      final hasSleepChange = _prevSleepHours > 0 && _prevSleepHours != newHours;
+
+      await provider.upsertModeLog({
+        'previousSleepHours': hasSleepChange ? _prevSleepHours : 0.0,
+        'sleepHours': newHours,
+        'sleepQuality': _sleepQuality.clamp(0, 10),
+        'hadNightmare': _hadNightmare,
+      });
+
+      setState(() => _prevSleepHours = newHours);
+      _showSuccessSnackbar(null, hasSleepChange ? prevForDisplay : null);
     }
   }
+
+  void _showSuccessSnackbar(double? prevMood, double? prevSleep) {
+    if (!mounted) return;
+    String message;
+    if (_logMode == 'mood') {
+      message = prevMood != null
+          ? 'Mood updated: ${prevMood.toStringAsFixed(1)} → ${_moodScore.toStringAsFixed(1)} / 10'
+          : 'Mood saved: ${_moodScore.toStringAsFixed(1)} / 10.0';
+    } else {
+      message = prevSleep != null
+          ? 'Sleep updated: ${prevSleep.toStringAsFixed(1)}h → ${_sleepHours.toStringAsFixed(1)}h'
+          : 'Sleep saved: ${_sleepHours.toStringAsFixed(1)}h';
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), backgroundColor: AppTheme.primary),
+    );
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  //  BUILD
+  // ═══════════════════════════════════════════════════════════════════════
 
   @override
   Widget build(BuildContext context) {
+    final provider = context.watch<AppProvider>();
+    final now = DateTime.now();
+    final todayStr = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+    if (_loadedForDate != todayStr && provider.logs.isNotEmpty) {
+      _loadedForDate = todayStr;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _loadTodayValues(provider);
+      });
+    }
+
     return SafeArea(
       child: SingleChildScrollView(
         padding: const EdgeInsets.all(20),
@@ -166,7 +235,9 @@ class _DailyLogTabState extends State<DailyLogTab> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             _buildModeToggle(),
-            const SizedBox(height: 32),
+            const SizedBox(height: 16),
+            _buildTodayBanner(),
+            const SizedBox(height: 16),
 
             if (_logMode == 'mood') ...[
               _buildMoodSection(),
@@ -176,7 +247,7 @@ class _DailyLogTabState extends State<DailyLogTab> {
               _buildActivitiesSection(),
               const SizedBox(height: 32),
               _buildSymptomsSection(),
-            ] else if (_logMode == 'sleep') ...[
+            ] else ...[
               _buildSleepSection(),
             ],
 
@@ -189,9 +260,7 @@ class _DailyLogTabState extends State<DailyLogTab> {
                   backgroundColor: AppTheme.primaryContainer,
                   foregroundColor: Colors.white,
                   padding: const EdgeInsets.symmetric(vertical: 16),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                 ),
                 child: const Text('Save Log Entry', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
               ),
@@ -203,68 +272,75 @@ class _DailyLogTabState extends State<DailyLogTab> {
     );
   }
 
-  Widget _buildModeToggle() {
+  // ─────────────────────────────── SHARED WIDGETS ────────────────────────
+
+  Widget _buildTodayBanner() {
+    final hasMood = _prevMoodScore > 0;
+    final hasSleep = _prevSleepHours > 0;
+    if (!hasMood && !hasSleep) return const SizedBox.shrink();
+    final parts = <String>[];
+    if (hasMood) parts.add('Mood: ${_prevMoodScore.toStringAsFixed(1)}/10');
+    if (hasSleep) parts.add('Sleep: ${_prevSleepHours.toStringAsFixed(1)}h');
     return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       decoration: BoxDecoration(
-        color: const Color(0xFFE2E8F0),
-        borderRadius: BorderRadius.circular(12),
+        color: AppTheme.primaryFixed.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: AppTheme.primary.withValues(alpha: 0.2)),
       ),
-      padding: const EdgeInsets.all(4),
       child: Row(
         children: [
+          const Icon(Icons.edit_note, color: AppTheme.primary, size: 18),
+          const SizedBox(width: 8),
           Expanded(
-            child: GestureDetector(
-              onTap: () => setState(() => _logMode = 'mood'),
-              child: Container(
-                padding: const EdgeInsets.symmetric(vertical: 12),
-                decoration: BoxDecoration(
-                  color: _logMode == 'mood' ? Colors.white : Colors.transparent,
-                  borderRadius: BorderRadius.circular(8),
-                  boxShadow: _logMode == 'mood'
-                      ? [BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 4)]
-                      : [],
-                ),
-                alignment: Alignment.center,
-                child: Text(
-                  'Mood',
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                    color: _logMode == 'mood' ? AppTheme.primary : AppTheme.outline,
-                  ),
-                ),
-              ),
+            child: Text(
+              'Updating today\'s entry · ${parts.join('  ·  ')}',
+              style: const TextStyle(fontSize: 12, color: AppTheme.onSurface),
             ),
           ),
-          Expanded(
-            child: GestureDetector(
-              onTap: () => setState(() => _logMode = 'sleep'),
-              child: Container(
-                padding: const EdgeInsets.symmetric(vertical: 12),
-                decoration: BoxDecoration(
-                  color: _logMode == 'sleep' ? Colors.white : Colors.transparent,
-                  borderRadius: BorderRadius.circular(8),
-                  boxShadow: _logMode == 'sleep'
-                      ? [BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 4)]
-                      : [],
-                ),
-                alignment: Alignment.center,
-                child: Text(
-                  'Sleep',
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                    color: _logMode == 'sleep' ? AppTheme.primary : AppTheme.outline,
-                  ),
-                ),
-              ),
-            ),
-          ),
-
         ],
       ),
     );
   }
+
+  Widget _buildModeToggle() {
+    return Container(
+      decoration: BoxDecoration(color: AppTheme.borderDefault, borderRadius: BorderRadius.circular(12)),
+      padding: const EdgeInsets.all(4),
+      child: Row(
+        children: ['mood', 'sleep'].map((mode) {
+          final isActive = _logMode == mode;
+          return Expanded(
+            child: GestureDetector(
+              onTap: () => setState(() => _logMode = mode),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                decoration: BoxDecoration(
+                  color: isActive ? Colors.white : Colors.transparent,
+                  borderRadius: BorderRadius.circular(8),
+                  boxShadow: isActive ? [BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 4)] : [],
+                ),
+                alignment: Alignment.center,
+                child: Text(
+                  mode == 'mood' ? 'Mood' : 'Sleep',
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: isActive ? AppTheme.primary : AppTheme.outline,
+                  ),
+                ),
+              ),
+            ),
+          );
+        }).toList(),
+      ),
+    );
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  //  MOOD TAB
+  // ═══════════════════════════════════════════════════════════════════════
 
   Widget _buildMoodSection() {
     return Column(
@@ -304,12 +380,10 @@ class _DailyLogTabState extends State<DailyLogTab> {
             decoration: BoxDecoration(
               color: isSelected ? AppTheme.primaryFixed : Colors.white,
               shape: BoxShape.circle,
-              border: Border.all(
-                color: isSelected ? Colors.transparent : AppTheme.outlineVariant,
-              ),
+              border: Border.all(color: isSelected ? Colors.transparent : AppTheme.outlineVariant),
             ),
             alignment: Alignment.center,
-            child: Icon(emoji, size: isSelected ? 32 : 28, color: isSelected ? Colors.white : AppTheme.onSurface),
+            child: Icon(emoji, size: isSelected ? 32 : 28, color: isSelected ? AppTheme.primary : AppTheme.onSurface),
           ),
           const SizedBox(height: 8),
           Text(label, style: const TextStyle(fontSize: 12, color: AppTheme.onSurfaceVariant)),
@@ -319,12 +393,28 @@ class _DailyLogTabState extends State<DailyLogTab> {
   }
 
   Widget _buildMoodSlider() {
+    final showTransition = _prevMoodScore > 0 && _prevMoodScore != _moodScore;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const Text('Mood Intensity', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
         const SizedBox(height: 8),
-        Text('Score: ${_moodScore.toStringAsFixed(1)} / 10.0', style: const TextStyle(fontSize: 14, color: AppTheme.onSurfaceVariant)),
+        showTransition
+            ? RichText(
+                text: TextSpan(
+                  style: const TextStyle(fontSize: 14, color: AppTheme.onSurfaceVariant),
+                  children: [
+                    TextSpan(
+                        text: _prevMoodScore.toStringAsFixed(1),
+                        style: const TextStyle(decoration: TextDecoration.lineThrough)),
+                    TextSpan(
+                        text: '  →  ${_moodScore.toStringAsFixed(1)} / 10.0',
+                        style: const TextStyle(color: AppTheme.primary, fontWeight: FontWeight.w600)),
+                  ],
+                ),
+              )
+            : Text('Score: ${_moodScore.toStringAsFixed(1)} / 10.0',
+                style: const TextStyle(fontSize: 14, color: AppTheme.onSurfaceVariant)),
         const SizedBox(height: 16),
         Slider(
           value: _moodScore,
@@ -336,19 +426,25 @@ class _DailyLogTabState extends State<DailyLogTab> {
           onChanged: (value) {
             setState(() {
               _moodScore = value;
-              // Auto-update emoji based on slider
               if (value <= 2.0) {
                 _selectedMoodEmoji = 'awful';
-              } else if (value <= 4.0) _selectedMoodEmoji = 'bad';
-              else if (value <= 6.0) _selectedMoodEmoji = 'meh';
-              else if (value <= 8.5) _selectedMoodEmoji = 'good';
-              else _selectedMoodEmoji = 'great';
+              } else if (value <= 4.0) {
+                _selectedMoodEmoji = 'bad';
+              } else if (value <= 6.0) {
+                _selectedMoodEmoji = 'meh';
+              } else if (value <= 8.5) {
+                _selectedMoodEmoji = 'good';
+              } else {
+                _selectedMoodEmoji = 'great';
+              }
             });
           },
         ),
       ],
     );
   }
+
+  // ─────────────────────────────── ACTIVITIES ────────────────────────────
 
   Widget _buildActivitiesSection() {
     return Column(
@@ -356,15 +452,43 @@ class _DailyLogTabState extends State<DailyLogTab> {
       children: [
         const Text('What have you been up to?', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
         const SizedBox(height: 16),
-        SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: Row(
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: AppTheme.borderDefault),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              _buildActivityChip('Work', Icons.work),
-              _buildActivityChip('Family', Icons.family_restroom),
-              _buildActivityChip('Friends', Icons.group),
-              _buildActivityChip('Hobbies', Icons.palette),
-              _buildActivityChip('Diet', Icons.restaurant),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  ..._kActivities.map((act) => _buildActivityPill(act)),
+                  _buildActivityPill('Others', isOthers: true),
+                ],
+              ),
+              if (_showOthersInput) ...[
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _othersController,
+                  decoration: InputDecoration(
+                    hintText: 'Describe your activity...',
+                    hintStyle: TextStyle(color: AppTheme.outline.withValues(alpha: 0.7), fontSize: 14),
+                    filled: true,
+                    fillColor: AppTheme.surfaceContainer,
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(50),
+                      borderSide: BorderSide.none,
+                    ),
+                  ),
+                  style: const TextStyle(fontSize: 14),
+                ),
+              ],
             ],
           ),
         ),
@@ -372,99 +496,179 @@ class _DailyLogTabState extends State<DailyLogTab> {
     );
   }
 
-  Widget _buildActivityChip(String label, IconData icon) {
+  Widget _buildActivityPill(String label, {bool isOthers = false}) {
     final isSelected = _selectedActivities.contains(label);
-
-    return Padding(
-      padding: const EdgeInsets.only(right: 12),
-      child: GestureDetector(
-        onTap: () => _toggleActivity(label),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 200),
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          decoration: BoxDecoration(
-            color: isSelected ? AppTheme.primary : Colors.white,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(
-              color: isSelected ? AppTheme.primary : AppTheme.outlineVariant,
+    return GestureDetector(
+      onTap: () => setState(() {
+        if (isSelected) {
+          _selectedActivities.remove(label);
+          if (isOthers) {
+            _showOthersInput = false;
+            _othersController.clear();
+          }
+        } else {
+          _selectedActivities.add(label);
+          if (isOthers) _showOthersInput = true;
+        }
+      }),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        decoration: BoxDecoration(
+          color: isSelected ? AppTheme.primaryFixed : AppTheme.surfaceContainer,
+          borderRadius: BorderRadius.circular(50),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w500,
+                color: isSelected ? AppTheme.primary : AppTheme.onSurfaceVariant,
+              ),
             ),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icon, color: isSelected ? Colors.white : AppTheme.primary, size: 20),
-              const SizedBox(width: 8),
-              Text(
-                label,
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                  color: isSelected ? Colors.white : AppTheme.onSurface,
-                ),
+            if (isOthers) ...[
+              const SizedBox(width: 4),
+              Icon(
+                isSelected ? Icons.edit : Icons.add,
+                size: 14,
+                color: isSelected ? AppTheme.primary : AppTheme.onSurfaceVariant,
               ),
             ],
-          ),
+          ],
         ),
       ),
     );
   }
+
+  // ─────────────────────────────── SYMPTOMS ──────────────────────────────
 
   Widget _buildSymptomsSection() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text('Symptoms', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+        const Text('Track Symptoms', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
         const SizedBox(height: 16),
-        Container(
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: const Color(0xFFE2E8F0)),
-          ),
-          child: Column(
-            children: [
-              _buildSymptomRow('Headache', Icons.headset_off),
-              const Divider(height: 1, color: Color(0xFFE2E8F0)),
-              _buildSymptomRow('Fatigue', Icons.bolt),
-              const Divider(height: 1, color: Color(0xFFE2E8F0)),
-              _buildSymptomRow('Anxiety', Icons.psychology),
-              const Divider(height: 1, color: Color(0xFFE2E8F0)),
-              _buildSymptomRow('Pain', Icons.warning),
-            ],
+        // Horizontally scrollable symptom chips
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            children: _kSymptoms.map((s) {
+              final isSelected = _selectedSymptoms.contains(s.name);
+              return Padding(
+                padding: const EdgeInsets.only(right: 10),
+                child: GestureDetector(
+                  onTap: () => setState(() {
+                    if (isSelected) {
+                      _selectedSymptoms.remove(s.name);
+                    } else {
+                      _selectedSymptoms.add(s.name);
+                    }
+                  }),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 200),
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    decoration: BoxDecoration(
+                      color: isSelected ? AppTheme.primaryFixed : Colors.white,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: isSelected ? AppTheme.primary.withValues(alpha: 0.35) : AppTheme.borderDefault,
+                      ),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(s.icon, size: 18, color: isSelected ? AppTheme.primary : AppTheme.onSurfaceVariant),
+                        const SizedBox(width: 8),
+                        Text(
+                          s.name,
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w500,
+                            color: isSelected ? AppTheme.primary : AppTheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            }).toList(),
           ),
         ),
+        if (_selectedSymptoms.isNotEmpty) ...[
+          const SizedBox(height: 16),
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: AppTheme.borderDefault),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Severity: ${_severityLabel(_symptomSeverity)}',
+                  style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 10),
+                _buildSeverityBar(),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: _symptomNotesController,
+                  maxLines: 3,
+                  decoration: InputDecoration(
+                    hintText: 'Add specific notes about symptoms...',
+                    hintStyle: TextStyle(color: AppTheme.outline.withValues(alpha: 0.7), fontSize: 14),
+                    filled: true,
+                    fillColor: AppTheme.surfaceContainer,
+                    contentPadding: const EdgeInsets.all(12),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide.none,
+                    ),
+                  ),
+                  style: const TextStyle(fontSize: 14, color: AppTheme.onSurface),
+                ),
+              ],
+            ),
+          ),
+        ],
       ],
     );
   }
 
-  Widget _buildSymptomRow(String symptom, IconData icon) {
-    return Padding(
-      padding: const EdgeInsets.all(16),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Row(
-            children: [
-              Icon(icon, color: AppTheme.onSurfaceVariant),
-              const SizedBox(width: 12),
-              Text(symptom, style: const TextStyle(fontSize: 16, color: AppTheme.onSurface)),
-            ],
+  Widget _buildSeverityBar() {
+    return Row(
+      children: List.generate(5, (i) {
+        final isActive = i < _symptomSeverity;
+        return Expanded(
+          child: GestureDetector(
+            onTap: () => setState(() => _symptomSeverity = i + 1),
+            child: Padding(
+              padding: EdgeInsets.only(right: i < 4 ? 4 : 0),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 150),
+                height: 8,
+                decoration: BoxDecoration(
+                  color: isActive ? AppTheme.secondary.withValues(alpha: 0.65) : AppTheme.surfaceContainer,
+                  borderRadius: BorderRadius.circular(4),
+                ),
+              ),
+            ),
           ),
-          Switch(
-            value: _symptoms[symptom] ?? false,
-            onChanged: (value) {
-              setState(() {
-                _symptoms[symptom] = value;
-              });
-            },
-            activeThumbColor: AppTheme.primary,
-          ),
-        ],
-      ),
+        );
+      }),
     );
   }
 
-  // --- SLEEP LOG UI ---
+  // ═══════════════════════════════════════════════════════════════════════
+  //  SLEEP TAB
+  // ═══════════════════════════════════════════════════════════════════════
+
   Widget _buildSleepSection() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -472,38 +676,54 @@ class _DailyLogTabState extends State<DailyLogTab> {
         const Text('Sleep Log', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w600)),
         const SizedBox(height: 8),
         const Text('How many hours did you sleep?', style: TextStyle(fontSize: 14, color: AppTheme.onSurfaceVariant)),
-        const SizedBox(height: 48),
-
+        const SizedBox(height: 24),
         Center(
           child: Column(
             children: [
               const Icon(Icons.bedtime, size: 64, color: AppTheme.primary),
               const SizedBox(height: 16),
-              Text(
-                '${_sleepHours.toStringAsFixed(1)} hrs',
-                style: const TextStyle(
-                  fontSize: 48,
-                  fontWeight: FontWeight.bold,
-                  color: AppTheme.primary,
+              if (_prevSleepHours > 0 && _prevSleepHours != _sleepHours)
+                RichText(
+                  textAlign: TextAlign.center,
+                  text: TextSpan(
+                    style: const TextStyle(fontFamily: 'Roboto'),
+                    children: [
+                      TextSpan(
+                        text: '${_prevSleepHours.toStringAsFixed(1)}h',
+                        style: const TextStyle(fontSize: 22, color: AppTheme.outline, decoration: TextDecoration.lineThrough),
+                      ),
+                      const TextSpan(text: '  →  ', style: TextStyle(fontSize: 22, color: AppTheme.outline)),
+                      TextSpan(
+                        text: '${_sleepHours.toStringAsFixed(1)} hrs',
+                        style: const TextStyle(fontSize: 32, fontWeight: FontWeight.bold, color: AppTheme.primary),
+                      ),
+                    ],
+                  ),
+                )
+              else
+                Text(
+                  '${_sleepHours.toStringAsFixed(1)} hrs',
+                  style: const TextStyle(fontSize: 32, fontWeight: FontWeight.bold, color: AppTheme.primary),
                 ),
-              ),
             ],
           ),
         ),
-        const SizedBox(height: 48),
-
-        Slider(
-          value: _sleepHours,
-          min: 0.0,
-          max: 12.0,
-          divisions: 48, // 30 min intervals
-          activeColor: AppTheme.primary,
-          inactiveColor: AppTheme.surfaceContainer,
-          onChanged: (value) {
-            setState(() {
-              _sleepHours = value;
-            });
-          },
+        const SizedBox(height: 24),
+        SliderTheme(
+          data: SliderTheme.of(context).copyWith(
+            trackHeight: 4,
+            thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 8),
+            overlayShape: const RoundSliderOverlayShape(overlayRadius: 16),
+          ),
+          child: Slider(
+            value: _sleepHours,
+            min: 0.0,
+            max: 12.0,
+            divisions: 48,
+            activeColor: AppTheme.primary,
+            inactiveColor: AppTheme.surfaceContainer,
+            onChanged: (value) => setState(() => _sleepHours = value),
+          ),
         ),
         const Padding(
           padding: EdgeInsets.symmetric(horizontal: 16),
@@ -515,8 +735,11 @@ class _DailyLogTabState extends State<DailyLogTab> {
             ],
           ),
         ),
-
-        const SizedBox(height: 48),
+        const SizedBox(height: 32),
+        _buildSleepQualitySection(),
+        const SizedBox(height: 32),
+        _buildNightmareSection(),
+        const SizedBox(height: 32),
         Container(
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
@@ -541,8 +764,120 @@ class _DailyLogTabState extends State<DailyLogTab> {
             ],
           ),
         ),
+        const SizedBox(height: 32),
       ],
     );
   }
 
+  // ─────────────────── SLEEP QUALITY (segmented pill bar) ────────────────
+
+  Widget _buildSleepQualitySection() {
+    // _sleepQuality: 0=unset, 2,4,6,8,10 → index 0-4
+    final selectedIdx = _sleepQuality == 0 ? -1 : (_sleepQuality ~/ 2 - 1).clamp(0, 4);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text('Sleep Quality', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+        const SizedBox(height: 4),
+        Text(
+          selectedIdx >= 0 ? _kSleepQualityLabels[selectedIdx] : 'How restful was your sleep?',
+          style: TextStyle(
+            fontSize: 14,
+            color: selectedIdx >= 0 ? AppTheme.primary : AppTheme.onSurfaceVariant,
+            fontWeight: selectedIdx >= 0 ? FontWeight.w600 : FontWeight.normal,
+          ),
+        ),
+        const SizedBox(height: 16),
+        Container(
+          padding: const EdgeInsets.all(4),
+          decoration: BoxDecoration(
+            color: AppTheme.surfaceContainer,
+            borderRadius: BorderRadius.circular(50),
+          ),
+          child: Row(
+            children: List.generate(5, (i) {
+              final isSelected = selectedIdx == i;
+              return Expanded(
+                child: GestureDetector(
+                  onTap: () => setState(() => _sleepQuality = (i + 1) * 2),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 200),
+                    padding: const EdgeInsets.symmetric(vertical: 10),
+                    decoration: BoxDecoration(
+                      color: isSelected ? Colors.white : Colors.transparent,
+                      borderRadius: BorderRadius.circular(50),
+                      boxShadow: isSelected
+                          ? [BoxShadow(color: Colors.black.withValues(alpha: 0.08), blurRadius: 4)]
+                          : [],
+                    ),
+                    alignment: Alignment.center,
+                    child: Text(
+                      _kSleepQualityLabels[i],
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
+                        color: isSelected ? AppTheme.primary : AppTheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            }),
+          ),
+        ),
+      ],
+    );
+  }
+
+  // ─────────────────────────────── NIGHTMARE ─────────────────────────────
+
+  Widget _buildNightmareSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text('Dream Experience', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+        const SizedBox(height: 4),
+        const Text('Did you experience any nightmares?', style: TextStyle(fontSize: 14, color: AppTheme.onSurfaceVariant)),
+        const SizedBox(height: 16),
+        Row(
+          children: [
+            Expanded(child: _buildDreamChoice(false, Icons.nightlight_round, 'No Nightmares', const Color(0xFF6366F1))),
+            const SizedBox(width: 12),
+            Expanded(child: _buildDreamChoice(true, Icons.cloud, 'Had Nightmares', AppTheme.error)),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildDreamChoice(bool value, IconData icon, String label, Color color) {
+    final isSelected = _hadNightmare == value;
+    return GestureDetector(
+      onTap: () => setState(() => _hadNightmare = value),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        padding: const EdgeInsets.symmetric(vertical: 16),
+        decoration: BoxDecoration(
+          color: isSelected ? color.withValues(alpha: 0.1) : Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: isSelected ? color : AppTheme.outlineVariant, width: isSelected ? 2 : 1),
+        ),
+        child: Column(
+          children: [
+            Icon(icon, color: isSelected ? color : AppTheme.outline, size: 28),
+            const SizedBox(height: 8),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: isSelected ? color : AppTheme.onSurfaceVariant,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }

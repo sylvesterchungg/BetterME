@@ -6,7 +6,6 @@ import 'package:firebase_auth/firebase_auth.dart' as auth;
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../providers/app_provider.dart';
 import '../theme.dart';
-import 'login_screen.dart';
 
 class ProfileTab extends StatefulWidget {
   const ProfileTab({super.key});
@@ -16,10 +15,6 @@ class ProfileTab extends StatefulWidget {
 }
 
 class _ProfileTabState extends State<ProfileTab> {
-  bool _dailyReminders = true;
-  bool _friendActivity = false;
-  bool _streakAlerts = true;
-
   final ImagePicker _picker = ImagePicker();
 
   Future<void> _pickAndUploadImage(AppProvider provider) async {
@@ -155,6 +150,8 @@ class _ProfileTabState extends State<ProfileTab> {
             child: Column(
               children: [
                 _buildProfileHeader(context, provider),
+                const SizedBox(height: 24),
+                _buildStatsRow(provider),
                 const SizedBox(height: 32),
                 _buildSettingsGrid(context, provider),
                 const SizedBox(height: 32),
@@ -192,8 +189,24 @@ class _ProfileTabState extends State<ProfileTab> {
                   ],
                 ),
                 child: CircleAvatar(
-                  backgroundColor: const Color(0xFFE2E8F0),
-                  backgroundImage: NetworkImage(user.avatarUrl),
+                  backgroundColor: AppTheme.borderDefault,
+                  backgroundImage: user.avatarUrl.isNotEmpty
+                      ? NetworkImage(user.avatarUrl)
+                      : null,
+                  onBackgroundImageError:
+                      user.avatarUrl.isNotEmpty ? (_, _) {} : null,
+                  child: user.avatarUrl.isEmpty
+                      ? Text(
+                          user.username.isNotEmpty
+                              ? user.username[0].toUpperCase()
+                              : '?',
+                          style: const TextStyle(
+                            fontSize: 36,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.white,
+                          ),
+                        )
+                      : null,
                 ),
               ),
               Container(
@@ -219,7 +232,7 @@ class _ProfileTabState extends State<ProfileTab> {
         ),
         const SizedBox(height: 4),
         Text(
-          'Premium Member • ${user.streak} Day Streak',
+          ' ${user.streak} Day Streak',
           style: const TextStyle(fontSize: 14, color: AppTheme.outline),
         ),
         const SizedBox(height: 16),
@@ -242,14 +255,48 @@ class _ProfileTabState extends State<ProfileTab> {
     );
   }
 
+  Widget _buildStatsRow(AppProvider provider) {
+    final avgMood = provider.averageMood;
+    final avgSleep = provider.averageSleep;
+    final completion = provider.taskCompletionRate;
+
+    return Row(
+      children: [
+        Expanded(child: _buildStatCard('Avg Mood', avgMood > 0 ? avgMood.toStringAsFixed(1) : '—', Icons.mood, AppTheme.primary)),
+        const SizedBox(width: 12),
+        Expanded(child: _buildStatCard('Avg Sleep', avgSleep > 0 ? '${avgSleep.toStringAsFixed(1)}h' : '—', Icons.bedtime, AppTheme.tertiary)),
+        const SizedBox(width: 12),
+        Expanded(child: _buildStatCard('Tasks Done', '${(completion * 100).toInt()}%', Icons.check_circle_outline, AppTheme.secondary)),
+      ],
+    );
+  }
+
+  Widget _buildStatCard(String label, String value, IconData icon, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 8),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppTheme.borderDefault),
+      ),
+      child: Column(
+        children: [
+          Icon(icon, color: color, size: 22),
+          const SizedBox(height: 8),
+          Text(value, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 2),
+          Text(label, style: const TextStyle(fontSize: 11, color: AppTheme.outline)),
+        ],
+      ),
+    );
+  }
+
   Widget _buildSettingsGrid(BuildContext context, AppProvider provider) {
     return Column(
       children: [
         _buildAccountSection(provider),
         const SizedBox(height: 16),
-        _buildNotificationsSection(context),
-        const SizedBox(height: 16),
-        _buildPrivacySection(),
+        _buildNotificationsSection(context, provider),
         const SizedBox(height: 16),
         _buildSupportSection(),
       ],
@@ -257,6 +304,10 @@ class _ProfileTabState extends State<ProfileTab> {
   }
 
   Widget _buildAccountSection(AppProvider provider) {
+    final isEmailUser = auth.FirebaseAuth.instance.currentUser?.providerData
+            .any((p) => p.providerId == 'password') ??
+        false;
+
     return _buildCard(
       title: 'Account',
       icon: Icons.account_circle,
@@ -266,38 +317,39 @@ class _ProfileTabState extends State<ProfileTab> {
           Icons.chevron_right,
           onTap: () => _showEditUsernameDialog(provider),
         ),
-        _buildListTile(
-          'Password & Security',
-          Icons.chevron_right,
-          onTap: _showChangePasswordDialog,
-        ),
-        _buildListTile('Subscription Plans', Icons.chevron_right),
+        if (isEmailUser)
+          _buildListTile(
+            'Password & Security',
+            Icons.chevron_right,
+            onTap: _showChangePasswordDialog,
+          ),
       ],
     );
   }
 
-  Widget _buildNotificationsSection(BuildContext context) {
+  Widget _buildNotificationsSection(BuildContext context, AppProvider provider) {
+    final user = provider.currentUser!;
     return _buildCard(
       title: 'Notifications',
       icon: Icons.notifications_active,
       children: [
         _buildSwitchTile(
-          'Daily Reminders',
-          'Gentle nudges for your journal',
-          _dailyReminders,
-          (v) => setState(() => _dailyReminders = v),
+          'Task Reminders',
+          'OS alerts for tasks with a set reminder time',
+          user.notificationsEnabled,
+          (v) => provider.updateNotificationPrefs(notificationsEnabled: v),
         ),
         _buildSwitchTile(
           'Friend Activity',
-          'When friends cheer your progress',
-          _friendActivity,
-          (v) => setState(() => _friendActivity = v),
+          'When someone accepts your friend request',
+          user.friendActivityNotif,
+          (v) => provider.updateNotificationPrefs(friendActivityNotif: v),
         ),
         _buildSwitchTile(
           'Streak Alerts',
-          "Don't lose your consistency",
-          _streakAlerts,
-          (v) => setState(() => _streakAlerts = v),
+          'Celebrate 7, 14, 30, 60 and 100-day milestones',
+          user.streakAlertsNotif,
+          (v) => provider.updateNotificationPrefs(streakAlertsNotif: v),
         ),
         const SizedBox(height: 16),
         Container(
@@ -322,16 +374,6 @@ class _ProfileTabState extends State<ProfileTab> {
     );
   }
 
-  Widget _buildPrivacySection() {
-    return _buildCard(
-      title: 'Privacy',
-      icon: Icons.lock,
-      children: [
-        _buildListTile('Data Sharing', Icons.chevron_right),
-        _buildListTile('App Lock', Icons.chevron_right),
-      ],
-    );
-  }
 
   Widget _buildSupportSection() {
     return _buildCard(
@@ -354,7 +396,7 @@ class _ProfileTabState extends State<ProfileTab> {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
+        border: Border.all(color: AppTheme.borderDefault),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withValues(alpha: 0.05),
@@ -453,11 +495,8 @@ class _ProfileTabState extends State<ProfileTab> {
       children: [
         OutlinedButton.icon(
           onPressed: () {
+            // AuthGate returns to LoginScreen once sign-out completes.
             provider.logout();
-            Navigator.pushReplacement(
-              context,
-              MaterialPageRoute(builder: (_) => const LoginScreen()),
-            );
           },
           icon: const Icon(Icons.logout, color: AppTheme.error),
           label: const Text(

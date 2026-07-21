@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/material.dart';
 
 class User {
   String id;
@@ -8,7 +9,20 @@ class User {
   int score; // Leaderboard score
   int waterIntake;
   int waterGoal;
+  String waterIntakeDate; // "YYYY-MM-DD" — resets intake when date changes
   List<String> friendsIds;
+  // Denormalized "today's mood" so friends can see it without reading private
+  // logs. Only meaningful when moodDate == today (see fromMap).
+  double moodScore; // 0.0 = no mood logged today
+  String moodDate; // "YYYY-MM-DD"
+  // Leaderboard sub-scores (denormalized so friends can rank without reading logs)
+  int taskStreak;              // increments per task completed; resets on overdue
+  double moodLeaderboardScore; // avg mood 0.0–10.0
+  double sleepLeaderboardScore; // avg sleep quality 0.0–10.0
+  // FR_904 — notification preferences
+  bool notificationsEnabled; // master switch for task-reminder local notifications
+  bool friendActivityNotif;  // in-app friend-accepted notifications
+  bool streakAlertsNotif;    // in-app and OS streak milestone notifications
 
   User({
     required this.id,
@@ -18,8 +32,22 @@ class User {
     this.score = 0,
     this.waterIntake = 0,
     this.waterGoal = 2500,
+    this.waterIntakeDate = '',
     this.friendsIds = const [],
+    this.moodScore = 0.0,
+    this.moodDate = '',
+    this.taskStreak = 0,
+    this.moodLeaderboardScore = 0.0,
+    this.sleepLeaderboardScore = 0.0,
+    this.notificationsEnabled = true,
+    this.friendActivityNotif = true,
+    this.streakAlertsNotif = true,
   });
+
+  static String todayDateString() {
+    final now = DateTime.now();
+    return '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+  }
 
   // Convert to Map for Firestore
   Map<String, dynamic> toMap() {
@@ -31,21 +59,50 @@ class User {
       'score': score,
       'waterIntake': waterIntake,
       'waterGoal': waterGoal,
+      'waterIntakeDate': waterIntakeDate,
       'friendsIds': friendsIds,
+      'moodScore': moodScore,
+      'moodDate': moodDate,
+      'taskStreak': taskStreak,
+      'moodLeaderboardScore': moodLeaderboardScore,
+      'sleepLeaderboardScore': sleepLeaderboardScore,
+      'notificationsEnabled': notificationsEnabled,
+      'friendActivityNotif': friendActivityNotif,
+      'streakAlertsNotif': streakAlertsNotif,
     };
   }
 
   // Create from Firestore Document
   factory User.fromMap(Map<String, dynamic> map, String documentId) {
+    final storedDate = map['waterIntakeDate'] as String? ?? '';
+    final today = todayDateString();
+    // If the stored date is not today, treat intake as 0
+    final intake = storedDate == today ? (map['waterIntake'] as int? ?? 0) : 0;
+
+    // Mood only counts for today; a stale mood from a previous day reads as 0.
+    final storedMoodDate = map['moodDate'] as String? ?? '';
+    final mood = storedMoodDate == today
+        ? ((map['moodScore'] as num?)?.toDouble() ?? 0.0)
+        : 0.0;
+
     return User(
       id: documentId,
       username: map['username'] ?? '',
       avatarUrl: map['avatarUrl'] ?? '',
       streak: map['streak'] ?? 0,
       score: map['score'] ?? 0,
-      waterIntake: map['waterIntake'] ?? 0,
-      waterGoal: map['waterGoal'] ?? 2500,
+      waterIntake: intake,
+      waterGoal: map['waterGoal'] as int? ?? 2500,
+      waterIntakeDate: storedDate,
       friendsIds: List<String>.from(map['friendsIds'] ?? []),
+      moodScore: mood,
+      moodDate: storedMoodDate,
+      taskStreak: map['taskStreak'] as int? ?? 0,
+      moodLeaderboardScore: (map['moodLeaderboardScore'] as num?)?.toDouble() ?? 0.0,
+      sleepLeaderboardScore: (map['sleepLeaderboardScore'] as num?)?.toDouble() ?? 0.0,
+      notificationsEnabled: map['notificationsEnabled'] as bool? ?? true,
+      friendActivityNotif: map['friendActivityNotif'] as bool? ?? true,
+      streakAlertsNotif: map['streakAlertsNotif'] as bool? ?? true,
     );
   }
 }
@@ -130,6 +187,110 @@ class TaskCategory {
       iconKey: map['iconKey'] ?? 'list',
     );
   }
+
+  static IconData iconFromKey(String key) {
+    switch (key) {
+      case 'self_improvement':
+        return Icons.self_improvement;
+      case 'restaurant':
+        return Icons.restaurant;
+      case 'medication':
+        return Icons.medication;
+      case 'fitness_center':
+        return Icons.fitness_center;
+      case 'water_drop':
+        return Icons.water_drop;
+      case 'book':
+        return Icons.menu_book;
+      case 'bedtime':
+        return Icons.bedtime;
+      case 'favorite':
+        return Icons.favorite;
+      case 'work':
+        return Icons.work;
+      case 'school':
+        return Icons.school;
+      case 'schedule':
+        return Icons.schedule;
+      case 'list':
+      default:
+        return Icons.list_alt;
+    }
+  }
+}
+
+class FriendRequest {
+  String id;
+  String fromId;
+  String fromUsername;
+  String fromAvatarUrl;
+  String toId;
+  String status; // 'pending' | 'accepted' | 'rejected'
+
+  FriendRequest({
+    this.id = '',
+    required this.fromId,
+    required this.fromUsername,
+    required this.fromAvatarUrl,
+    required this.toId,
+    this.status = 'pending',
+  });
+
+  Map<String, dynamic> toMap() => {
+    'fromId': fromId,
+    'fromUsername': fromUsername,
+    'fromAvatarUrl': fromAvatarUrl,
+    'toId': toId,
+    'status': status,
+  };
+
+  factory FriendRequest.fromMap(Map<String, dynamic> map, String documentId) {
+    return FriendRequest(
+      id: documentId,
+      fromId: map['fromId'] ?? '',
+      fromUsername: map['fromUsername'] ?? '',
+      fromAvatarUrl: map['fromAvatarUrl'] ?? '',
+      toId: map['toId'] ?? '',
+      status: map['status'] ?? 'pending',
+    );
+  }
+}
+
+class ProductivityRecord {
+  String id;
+  String userId;
+  String date; // "YYYY-MM-DD"
+  double completionRate; // 0.0–1.0
+  int completedTasks;
+  int totalTasks;
+
+  ProductivityRecord({
+    this.id = '',
+    this.userId = '',
+    required this.date,
+    required this.completionRate,
+    required this.completedTasks,
+    required this.totalTasks,
+  });
+
+  Map<String, dynamic> toMap() => {
+    'userId': userId,
+    'date': date,
+    'completionRate': completionRate,
+    'completedTasks': completedTasks,
+    'totalTasks': totalTasks,
+  };
+
+  factory ProductivityRecord.fromMap(Map<String, dynamic> map, String documentId) {
+    return ProductivityRecord(
+      id: documentId,
+      userId: map['userId'] ?? '',
+      date: map['date'] ?? '',
+      completionRate: (map['completionRate'] as num?)?.toDouble() ?? 0.0,
+      completedTasks: map['completedTasks'] as int? ?? 0,
+      totalTasks: map['totalTasks'] as int? ?? 0,
+    );
+  }
 }
 
 class LogEntry {
@@ -138,9 +299,16 @@ class LogEntry {
   DateTime date;
   double sleepHours;
   double moodScore; // 1.0 to 10.0
+  int sleepQuality; // 1–10; 0 = not set
+  bool hadNightmare;
   String notes;
   String trigger;
   List<String> emotions;
+  // Non-zero only when the day's entry was updated (stores the score before the update)
+  double previousMoodScore;
+  double previousSleepHours;
+  bool isSharedWithFriends; // whether this entry is visible to mutual friends
+  String photoUrl; // optional attached photo for the day; empty = none
 
   LogEntry({
     this.id = '',
@@ -148,9 +316,15 @@ class LogEntry {
     required this.date,
     required this.sleepHours,
     required this.moodScore,
+    this.sleepQuality = 0,
+    this.hadNightmare = false,
     this.notes = '',
     this.trigger = '',
     this.emotions = const [],
+    this.previousMoodScore = 0.0,
+    this.previousSleepHours = 0.0,
+    this.isSharedWithFriends = false,
+    this.photoUrl = '',
   });
 
   Map<String, dynamic> toMap() {
@@ -159,9 +333,15 @@ class LogEntry {
       'date': Timestamp.fromDate(date),
       'sleepHours': sleepHours,
       'moodScore': moodScore,
+      'sleepQuality': sleepQuality,
+      'hadNightmare': hadNightmare,
       'notes': notes,
       'trigger': trigger,
       'emotions': emotions,
+      'previousMoodScore': previousMoodScore,
+      'previousSleepHours': previousSleepHours,
+      'isSharedWithFriends': isSharedWithFriends,
+      'photoUrl': photoUrl,
     };
   }
 
@@ -172,41 +352,58 @@ class LogEntry {
       date: (map['date'] as Timestamp?)?.toDate() ?? DateTime.now(),
       sleepHours: (map['sleepHours'] as num?)?.toDouble() ?? 0.0,
       moodScore: (map['moodScore'] as num?)?.toDouble() ?? 0.0,
+      sleepQuality: map['sleepQuality'] as int? ?? 0,
+      hadNightmare: map['hadNightmare'] as bool? ?? false,
       notes: map['notes'] ?? '',
       trigger: map['trigger'] ?? '',
       emotions: List<String>.from(map['emotions'] ?? []),
+      previousMoodScore: (map['previousMoodScore'] as num?)?.toDouble() ?? 0.0,
+      previousSleepHours: (map['previousSleepHours'] as num?)?.toDouble() ?? 0.0,
+      isSharedWithFriends: map['isSharedWithFriends'] as bool? ?? false,
+      photoUrl: map['photoUrl'] ?? '',
     );
   }
 }
 
-class Friend {
-  String username;
-  String avatarUrl;
-  int streak;
-  String recentActivity;
+// In-app notifications stored in Firestore (FR_902, FR_903)
+class AppNotification {
+  String id;
+  String userId;
+  String type; // 'streak_milestone' | 'friend_accepted' | 'friend_request'
+  String title;
+  String body;
+  DateTime createdAt;
+  bool isRead;
 
-  Friend({
-    required this.username,
-    required this.avatarUrl,
-    required this.streak,
-    required this.recentActivity,
+  AppNotification({
+    this.id = '',
+    required this.userId,
+    required this.type,
+    required this.title,
+    required this.body,
+    required this.createdAt,
+    this.isRead = false,
   });
 
-  Map<String, dynamic> toMap() {
-    return {
-      'username': username,
-      'avatarUrl': avatarUrl,
-      'streak': streak,
-      'recentActivity': recentActivity,
-    };
-  }
+  Map<String, dynamic> toMap() => {
+    'userId': userId,
+    'type': type,
+    'title': title,
+    'body': body,
+    'createdAt': Timestamp.fromDate(createdAt),
+    'isRead': isRead,
+  };
 
-  factory Friend.fromMap(Map<String, dynamic> map) {
-    return Friend(
-      username: map['username'] ?? '',
-      avatarUrl: map['avatarUrl'] ?? '',
-      streak: map['streak'] ?? 0,
-      recentActivity: map['recentActivity'] ?? '',
+  factory AppNotification.fromMap(Map<String, dynamic> map, String documentId) {
+    return AppNotification(
+      id: documentId,
+      userId: map['userId'] ?? '',
+      type: map['type'] ?? '',
+      title: map['title'] ?? '',
+      body: map['body'] ?? '',
+      createdAt: (map['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
+      isRead: map['isRead'] as bool? ?? false,
     );
   }
 }
+

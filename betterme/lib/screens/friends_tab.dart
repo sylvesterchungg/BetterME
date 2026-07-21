@@ -1,10 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:intl/intl.dart';
 import '../providers/app_provider.dart';
 import '../theme.dart';
 import '../models/models.dart';
-import 'notifications_screen.dart';
+import '../widgets/app_page_header.dart';
 
 class FriendsTab extends StatefulWidget {
   const FriendsTab({super.key});
@@ -15,24 +14,51 @@ class FriendsTab extends StatefulWidget {
 
 class _FriendsTabState extends State<FriendsTab> {
   final TextEditingController _searchController = TextEditingController();
+  int _leaderboardIndex = 0; // 0=Overall 1=Mood 2=Sleep 3=Tasks
 
-  void _handleAddFriend(AppProvider provider) async {
+  void _handleSendRequest(AppProvider provider) async {
     final username = _searchController.text.trim();
     if (username.isEmpty) return;
 
     try {
-      await provider.addFriend(username);
+      await provider.sendFriendRequest(username);
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Added $username as a friend!')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Friend request sent to $username!')),
+        );
       }
       _searchController.clear();
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not find user $username.')),
+          SnackBar(content: Text(e.toString().replaceFirst('Exception: ', ''))),
         );
+      }
+    }
+  }
+
+  Future<void> _handleRespond(
+    AppProvider provider,
+    String requestId,
+    String fromId,
+    bool accept,
+  ) async {
+    try {
+      await provider.respondToRequest(requestId, fromId, accept);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              accept ? 'Friend request accepted!' : 'Request declined.',
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Error: $e')));
       }
     }
   }
@@ -53,87 +79,38 @@ class _FriendsTabState extends State<FriendsTab> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _buildHeader(context, provider),
+                AppPageHeader(
+                  title: 'Community',
+                  user: provider.currentUser,
+                  leadingWidget: Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: AppTheme.primaryContainer,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Icon(
+                      Icons.bubble_chart,
+                      color: Colors.white,
+                      size: 20,
+                    ),
+                  ),
+                ),
                 const SizedBox(height: 24),
                 _buildSearchAndAdd(provider),
+                if (provider.incomingRequests.isNotEmpty) ...[
+                  const SizedBox(height: 24),
+                  _buildIncomingRequests(provider),
+                ],
                 const SizedBox(height: 24),
                 _buildFriendCircles(provider),
                 const SizedBox(height: 24),
                 _buildLeaderboardAndActivity(context, provider),
-                const SizedBox(height: 24),
-                _buildRecommendedCommunities(),
                 const SizedBox(height: 32),
               ],
             ),
           ),
         );
       },
-    );
-  }
-
-  Widget _buildHeader(BuildContext context, AppProvider provider) {
-    final now = DateTime.now();
-    final dateStr = DateFormat('MMMM d, yyyy').format(now);
-
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [
-        Row(
-          children: [
-            // Brand icon
-            Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: AppTheme.primaryContainer,
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: const Icon(
-                Icons.bubble_chart,
-                color: Colors.white,
-                size: 20,
-              ),
-            ),
-            const SizedBox(width: 12),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'Community',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
-                ),
-                Text(
-                  dateStr,
-                  style: const TextStyle(fontSize: 12, color: AppTheme.outline),
-                ),
-              ],
-            ),
-          ],
-        ),
-        Row(
-          children: [
-            GestureDetector(
-              onTap: () => Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const NotificationsScreen()),
-              ),
-              child: Container(
-                width: 40,
-                height: 40,
-                decoration: BoxDecoration(
-                  color: AppTheme.surfaceContainerLow,
-                  shape: BoxShape.circle,
-                  border: Border.all(color: const Color(0xFFE2E8F0)),
-                ),
-                child: const Icon(
-                  Icons.notifications_outlined,
-                  color: AppTheme.onSurfaceVariant,
-                  size: 20,
-                ),
-              ),
-            ),
-          ],
-        ),
-      ],
     );
   }
 
@@ -146,7 +123,7 @@ class _FriendsTabState extends State<FriendsTab> {
             decoration: BoxDecoration(
               color: Colors.white,
               borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: const Color(0xFFE2E8F0)),
+              border: Border.all(color: AppTheme.borderDefault),
             ),
             child: Row(
               children: [
@@ -174,7 +151,7 @@ class _FriendsTabState extends State<FriendsTab> {
         ),
         const SizedBox(width: 12),
         GestureDetector(
-          onTap: () => _handleAddFriend(provider),
+          onTap: () => _handleSendRequest(provider),
           child: Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
@@ -182,6 +159,165 @@ class _FriendsTabState extends State<FriendsTab> {
               borderRadius: BorderRadius.circular(12),
             ),
             child: const Icon(Icons.person_add, color: Colors.white),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildIncomingRequests(AppProvider provider) {
+    final requests = provider.incomingRequests;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            const Text(
+              'Friend Requests',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(width: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+              decoration: BoxDecoration(
+                color: AppTheme.primary,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Text(
+                '${requests.length}',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        Container(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: AppTheme.borderDefault),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.05),
+                blurRadius: 12,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: Column(
+            children: requests.asMap().entries.map((entry) {
+              final idx = entry.key;
+              final req = entry.value;
+              return Column(
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Row(
+                      children: [
+                        CircleAvatar(
+                          radius: 24,
+                          backgroundColor: AppTheme.borderDefault,
+                          backgroundImage: req.fromAvatarUrl.isNotEmpty
+                              ? NetworkImage(req.fromAvatarUrl)
+                              : null,
+                          child: req.fromAvatarUrl.isEmpty
+                              ? const Icon(
+                                  Icons.person,
+                                  color: AppTheme.outline,
+                                )
+                              : null,
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                req.fromUsername,
+                                style: const TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              const Text(
+                                'Wants to be your friend',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: AppTheme.outline,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        Row(
+                          children: [
+                            GestureDetector(
+                              onTap: () => _handleRespond(
+                                provider,
+                                req.id,
+                                req.fromId,
+                                true,
+                              ),
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 14,
+                                  vertical: 7,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: AppTheme.primary,
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: const Text(
+                                  'Accept',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            GestureDetector(
+                              onTap: () => _handleRespond(
+                                provider,
+                                req.id,
+                                req.fromId,
+                                false,
+                              ),
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 14,
+                                  vertical: 7,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: AppTheme.surfaceContainer,
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: const Text(
+                                  'Decline',
+                                  style: TextStyle(
+                                    color: AppTheme.onSurfaceVariant,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (idx < requests.length - 1)
+                    const Divider(height: 1, color: AppTheme.borderDefault),
+                ],
+              );
+            }).toList(),
           ),
         ),
       ],
@@ -231,14 +367,7 @@ class _FriendsTabState extends State<FriendsTab> {
           child: Row(
             children: [
               _buildMyMoodItem(todayLog),
-              ...friends.map(
-                (f) => _buildStoryItem(
-                  f.username,
-                  f.avatarUrl,
-                  false,
-                  AppTheme.primary,
-                ),
-              ),
+              ...friends.map(_buildFriendMoodItem),
             ],
           ),
         ),
@@ -252,23 +381,10 @@ class _FriendsTabState extends State<FriendsTab> {
     Color fgIconColor = AppTheme.primary;
 
     if (log != null) {
-      if (log.moodScore >= 8) {
-        icon = Icons.sentiment_very_satisfied;
-        bgIconColor = AppTheme.primaryFixed;
-        fgIconColor = AppTheme.primaryContainer;
-      } else if (log.moodScore >= 6) {
-        icon = Icons.sentiment_satisfied;
-        bgIconColor = AppTheme.secondaryFixed;
-        fgIconColor = AppTheme.secondary;
-      } else if (log.moodScore <= 3) {
-        icon = Icons.sentiment_very_dissatisfied;
-        bgIconColor = const Color(0xFFFFDAD6);
-        fgIconColor = AppTheme.error;
-      } else {
-        icon = Icons.sentiment_neutral;
-        bgIconColor = AppTheme.surfaceContainerHighest;
-        fgIconColor = AppTheme.onSurfaceVariant;
-      }
+      final mood = _moodVisual(log.moodScore);
+      icon = mood.icon;
+      bgIconColor = mood.bg;
+      fgIconColor = mood.fg;
     }
 
     return Padding(
@@ -307,60 +423,91 @@ class _FriendsTabState extends State<FriendsTab> {
     );
   }
 
-  Widget _buildStoryItem(
-    String name,
-    String? avatarUrl,
-    bool isAdd,
-    Color borderColor,
-  ) {
+  // Maps a mood score (1–10) to its face icon and colors. Shared by the
+  // current user's "My Mood" item and the friends' mood badges.
+  ({IconData icon, Color bg, Color fg}) _moodVisual(double score) {
+    if (score >= 8) {
+      return (
+        icon: Icons.sentiment_very_satisfied,
+        bg: AppTheme.primaryFixed,
+        fg: AppTheme.primaryContainer,
+      );
+    } else if (score >= 6) {
+      return (
+        icon: Icons.sentiment_satisfied,
+        bg: AppTheme.secondaryFixed,
+        fg: AppTheme.secondary,
+      );
+    } else if (score <= 3) {
+      return (
+        icon: Icons.sentiment_very_dissatisfied,
+        bg: const Color(0xFFFFDAD6),
+        fg: AppTheme.error,
+      );
+    } else {
+      return (
+        icon: Icons.sentiment_neutral,
+        bg: AppTheme.surfaceContainerHighest,
+        fg: AppTheme.onSurfaceVariant,
+      );
+    }
+  }
+
+  // Friend's avatar with a mood-face badge. The badge only appears when the
+  // friend has logged a mood today (moodScore > 0), sourced from their public
+  // profile doc since friends' logs are private.
+  Widget _buildFriendMoodItem(User friend) {
+    final hasMood = friend.moodScore > 0;
+    final mood = hasMood ? _moodVisual(friend.moodScore) : null;
+
     return Padding(
       padding: const EdgeInsets.only(right: 16),
       child: Column(
         children: [
-          Container(
+          SizedBox(
             width: 64,
             height: 64,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              border: Border.all(
-                color: isAdd ? Colors.transparent : borderColor,
-                width: 2,
-              ),
-              gradient: isAdd
-                  ? const LinearGradient(
-                      colors: [AppTheme.primary, AppTheme.primaryContainer],
-                    )
-                  : null,
-            ),
-            child: Padding(
-              padding: const EdgeInsets.all(2),
-              child: Container(
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: isAdd ? Colors.white : const Color(0xFFE2E8F0),
-                  border: Border.all(color: Colors.white, width: 2),
-                  image: (!isAdd && avatarUrl != null)
-                      ? DecorationImage(
-                          image: NetworkImage(avatarUrl),
-                          fit: BoxFit.cover,
-                        )
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                Container(
+                  width: 64,
+                  height: 64,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: AppTheme.borderDefault,
+                    border: Border.all(color: AppTheme.primary, width: 2),
+                    image: friend.avatarUrl.isNotEmpty
+                        ? DecorationImage(
+                            image: NetworkImage(friend.avatarUrl),
+                            fit: BoxFit.cover,
+                          )
+                        : null,
+                  ),
+                  child: friend.avatarUrl.isEmpty
+                      ? Icon(Icons.person, color: Colors.grey.shade400, size: 32)
                       : null,
                 ),
-                child: isAdd
-                    ? const Icon(Icons.add, color: AppTheme.primary, size: 32)
-                    : (avatarUrl == null
-                          ? Icon(
-                              Icons.person,
-                              color: Colors.grey.shade400,
-                              size: 32,
-                            )
-                          : null),
-              ),
+                if (mood != null)
+                  Positioned(
+                    right: -2,
+                    bottom: -2,
+                    child: Container(
+                      padding: const EdgeInsets.all(2),
+                      decoration: BoxDecoration(
+                        color: mood.bg,
+                        shape: BoxShape.circle,
+                        border: Border.all(color: Colors.white, width: 2),
+                      ),
+                      child: Icon(mood.icon, color: mood.fg, size: 16),
+                    ),
+                  ),
+              ],
             ),
           ),
           const SizedBox(height: 8),
           Text(
-            name,
+            friend.username,
             style: const TextStyle(fontSize: 12, color: AppTheme.onSurface),
           ),
         ],
@@ -382,15 +529,44 @@ class _FriendsTabState extends State<FriendsTab> {
   }
 
   Widget _buildLeaderboardCard(BuildContext context, AppProvider provider) {
-    final leaderboard = provider.leaderboard;
-    final currentUserId = provider.currentUser?.id;
+    final allUsers = provider.leaderboard; // current user + friends
+    final currentUser = provider.currentUser;
+    final currentUserId = currentUser?.id;
+
+    // Sort and compute display values based on selected tab
+    final tabs = [
+      (label: 'Overall', icon: Icons.leaderboard_outlined),
+      (label: 'Mood', icon: Icons.mood),
+      (label: 'Sleep', icon: Icons.bedtime_outlined),
+      (label: 'Tasks', icon: Icons.task_alt),
+    ];
+
+    List<User> sorted;
+    String Function(User) subtitle;
+    switch (_leaderboardIndex) {
+      case 1:
+        sorted = List.of(allUsers)..sort((a, b) => b.moodLeaderboardScore.compareTo(a.moodLeaderboardScore));
+        subtitle = (u) => '${u.moodLeaderboardScore.toStringAsFixed(1)} / 10 avg mood';
+      case 2:
+        sorted = List.of(allUsers)..sort((a, b) => b.sleepLeaderboardScore.compareTo(a.sleepLeaderboardScore));
+        subtitle = (u) => '${u.sleepLeaderboardScore.toStringAsFixed(1)} / 10 sleep quality';
+      case 3:
+        sorted = List.of(allUsers)..sort((a, b) => b.taskStreak.compareTo(a.taskStreak));
+        subtitle = (u) => '${u.taskStreak} tasks completed';
+      default: // 0 — Overall
+        sorted = List.of(allUsers)..sort((a, b) => b.score.compareTo(a.score));
+        subtitle = (u) => '${u.score} pts · ${u.streak}d streak';
+    }
+
+    final myRank = sorted.indexWhere((u) => u.id == currentUserId) + 1;
+    final userInList = sorted.any((u) => u.id == currentUserId);
 
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
+        border: Border.all(color: AppTheme.borderDefault),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withValues(alpha: 0.05),
@@ -400,45 +576,94 @@ class _FriendsTabState extends State<FriendsTab> {
         ],
       ),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Row(
-                children: [
-                  Icon(Icons.leaderboard, color: AppTheme.primary),
-                  SizedBox(width: 8),
-                  Text(
-                    'Leaderboard',
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
-                  ),
-                ],
-              ),
-              Text(
-                'Weekly',
-                style: TextStyle(fontSize: 12, color: AppTheme.outline),
-              ),
+              Icon(Icons.leaderboard, color: AppTheme.primary),
+              SizedBox(width: 8),
+              Text('Friends Leaderboard', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
             ],
           ),
-          const SizedBox(height: 16),
-          if (leaderboard.isEmpty)
-            const Text(
-              'No data available',
-              style: TextStyle(color: Colors.grey),
+          const SizedBox(height: 14),
+          // Tab selector
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: tabs.asMap().entries.map((e) {
+                final i = e.key;
+                final tab = e.value;
+                final selected = _leaderboardIndex == i;
+                return GestureDetector(
+                  onTap: () => setState(() => _leaderboardIndex = i),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 180),
+                    margin: const EdgeInsets.only(right: 8),
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+                    decoration: BoxDecoration(
+                      color: selected ? AppTheme.primary : AppTheme.surfaceContainerHighest,
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(tab.icon, size: 14, color: selected ? Colors.white : AppTheme.onSurfaceVariant),
+                        const SizedBox(width: 5),
+                        Text(
+                          tab.label,
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            color: selected ? Colors.white : AppTheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              }).toList(),
             ),
-          ...leaderboard.asMap().entries.map((entry) {
-            int idx = entry.key;
-            var user = entry.value;
-            bool isUser = user.id == currentUserId;
-            return _buildLeaderboardRow(
-              '${idx + 1}',
-              isUser ? 'You (${user.username})' : user.username,
-              '${user.streak} Day Streak',
-              idx == 0,
-              isUser,
-              user.avatarUrl,
-            );
-          }),
+          ),
+          const SizedBox(height: 16),
+          if (sorted.isEmpty)
+            const Text('No data available', style: TextStyle(color: Colors.grey))
+          else
+            ...sorted.asMap().entries.map((entry) {
+              final idx = entry.key;
+              final user = entry.value;
+              final isUser = user.id == currentUserId;
+              return _buildLeaderboardRow(
+                '${idx + 1}',
+                isUser ? 'You (${user.username})' : user.username,
+                subtitle(user),
+                idx == 0,
+                isUser,
+                user.avatarUrl,
+              );
+            }),
+          if (!userInList && currentUser != null) ...[
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 4),
+              child: Row(
+                children: [
+                  Expanded(child: Divider()),
+                  Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 8),
+                    child: Text('···', style: TextStyle(color: AppTheme.outline)),
+                  ),
+                  Expanded(child: Divider()),
+                ],
+              ),
+            ),
+            _buildLeaderboardRow(
+              myRank > 0 ? '#$myRank' : '—',
+              'You (${currentUser.username})',
+              subtitle(currentUser),
+              false,
+              true,
+              currentUser.avatarUrl,
+            ),
+          ],
         ],
       ),
     );
@@ -487,7 +712,7 @@ class _FriendsTabState extends State<FriendsTab> {
           const SizedBox(width: 12),
           CircleAvatar(
             radius: 20,
-            backgroundColor: const Color(0xFFE2E8F0),
+            backgroundColor: AppTheme.borderDefault,
             backgroundImage: NetworkImage(avatarUrl),
           ),
           const SizedBox(width: 12),
@@ -532,7 +757,7 @@ class _FriendsTabState extends State<FriendsTab> {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
+        border: Border.all(color: AppTheme.borderDefault),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withValues(alpha: 0.05),
@@ -660,81 +885,4 @@ class _FriendsTabState extends State<FriendsTab> {
     );
   }
 
-  Widget _buildRecommendedCommunities() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text(
-          'Recommended Communities',
-          style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
-        ),
-        const SizedBox(height: 16),
-        SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: Row(
-            children: [
-              _buildCommunityCard(
-                'Sleep Seekers',
-                '1.2k Members • Active Now',
-                AppTheme.primaryContainer,
-              ),
-              _buildCommunityCard(
-                'Daily Gratitude',
-                '856 Members • Calm vibes',
-                AppTheme.secondaryContainer,
-              ),
-              _buildCommunityCard(
-                'Anxiety Allies',
-                '3.4k Members • Safe Space',
-                AppTheme.tertiaryContainer,
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildCommunityCard(String title, String subtitle, Color bgColor) {
-    return Container(
-      width: 160,
-      margin: const EdgeInsets.only(right: 16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            height: 80,
-            decoration: BoxDecoration(
-              color: bgColor,
-              borderRadius: const BorderRadius.vertical(
-                top: Radius.circular(12),
-              ),
-            ),
-            padding: const EdgeInsets.all(12),
-            alignment: Alignment.bottomLeft,
-            child: Text(
-              title,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.all(12),
-            child: Text(
-              subtitle,
-              style: const TextStyle(fontSize: 12, color: AppTheme.outline),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
 }

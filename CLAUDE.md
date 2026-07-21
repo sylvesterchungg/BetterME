@@ -5,13 +5,18 @@
 **BetterME** is a Flutter-based personal wellness and fitness tracking application that helps users monitor their physical health, mental wellbeing, and daily tasks. The app integrates Firebase for authentication and data persistence, uses Google Sign-In for convenient login, and tracks real-time health metrics via pedometer.
 
 ### Key Features
-- **Authentication**: Email/password and Google Sign-In via Firebase Auth
-- **User Profiles**: Custom avatars, display names, streaks, and leaderboard scores
-- **Health Tracking**: Sleep hours, mood scores, water intake, and step counting
+- **Authentication**: Email/password and Google Sign-In via Firebase Auth; password reset via email (FR_105)
+- **User Profiles**: Custom avatars, display names, streaks, and leaderboard scores; avg mood/sleep/completion stats on profile (FR_805)
+- **Health Tracking**: Sleep hours, mood scores, water intake, and step counting; today's mood shown on dashboard (FR_207)
 - **Task Management**: Create tasks with custom categories, due dates, reminders, and recurring options
 - **Daily Logging**: Record daily sleep, mood, triggers, and emotions with notes
 - **Social Features**: Add friends, view leaderboards, and compete based on scores
 - **Real-time Updates**: All data syncs via Firestore streams for instant UI updates
+
+### Implemented FYP Functional Requirements
+`FR_101` `FR_102` `FR_103` `FR_104` **`FR_105`** `FR_106` `FR_202` `FR_203` `FR_204` `FR_206` `FR_207(partial→done)` `FR_208` `FR_301` `FR_302` `FR_304` `FR_401` `FR_402` `FR_404` `FR_501` `FR_504` `FR_505` `FR_601` `FR_602` `FR_603` `FR_801` `FR_802` `FR_803` **`FR_804`** `FR_805(partial→done)` `FR_901` `FR_902` `FR_903` `FR_904`
+
+**Sprint 1 additions (2026-06-18):** FR_105 (forgot password), FR_207 (today's mood on dashboard), FR_804 (change password — Google users excluded), FR_805 (avg mood/sleep/completion stats on profile)
 
 ---
 
@@ -130,26 +135,23 @@ All models have:
 - **Google Sign-In**: Requires Google OAuth configuration (iOS/Android/Web)
 - Auto-creates user profile on first login if none exists
 
-### Firestore Security Rules (Recommended)
+### Firestore Security Rules
+
+The authoritative rules live in **[`betterme/firestore.rules`](betterme/firestore.rules)** (version-controlled and referenced from `firebase.json`). Deploy with:
+
+```bash
+cd betterme
+firebase deploy --only firestore:rules,firestore:indexes
 ```
-rules_version = '2';
-service cloud.firestore {
-  match /databases/{database}/documents {
-    match /users/{userId} {
-      allow read, write: if request.auth.uid == userId;
-    }
-    match /tasks/{document=**} {
-      allow read, write: if request.auth.uid == resource.data.userId;
-    }
-    match /taskCategories/{document=**} {
-      allow read, write: if request.auth.uid == resource.data.userId;
-    }
-    match /logs/{document=**} {
-      allow read, write: if request.auth.uid == resource.data.userId;
-    }
-  }
-}
-```
+
+**Model (as of 2026-07-01):**
+- **Private, owner-only** (`resource.data.userId == request.auth.uid`): `logs`, `tasks`, `taskCategories`, `productivity`. A user can never read another user's mood/sleep logs — this is what enforces privacy at the data layer, independent of the app UI.
+- **`users` profiles**: readable by any signed-in user (the global leaderboard, "add friend by username" search, and the friends list all read other users' profile docs). Profile docs hold no private logs, so this is intentional.
+- **`friendRequests`**: visible only to the sender or recipient.
+
+> **⚠️ Known limitation (friendship is not cryptographically two-sided):** the `users` update rule permits *any* signed-in user to modify **only** the `friendsIds` field of *another* user's doc. This is required so that accepting a friend request can add each user to the other's friends list without a Cloud Function. It cannot touch any other field (scores/usernames stay protected), but it does mean a client could unilaterally add itself to someone's `friendsIds`. Acceptable for the current client-only phase; a proper fix would move the mutual-add into a Cloud Function (or callable) and lock `friendsIds` to server writes only. See [`friendRequests` handling in `database_service.dart`](betterme/lib/services/database_service.dart).
+
+The composite index required by the logs query (`where userId` + `orderBy date desc`) is declared in **[`betterme/firestore.indexes.json`](betterme/firestore.indexes.json)**.
 
 ### Firebase Storage Rules (Avatars)
 ```

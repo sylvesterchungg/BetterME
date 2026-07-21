@@ -32,6 +32,18 @@ class DatabaseService {
     return await snapshot.ref.getDownloadURL();
   }
 
+  // Upload a journal entry photo. One photo per user per day (deterministic path
+  // so re-uploading replaces the previous image).
+  Future<String> uploadJournalPhoto(File imageFile, String userId, String dateKey) async {
+    final storageRef = FirebaseStorage.instance
+        .ref()
+        .child('journal_photos')
+        .child(userId)
+        .child('$dateKey.jpg');
+    final snapshot = await storageRef.putFile(imageFile);
+    return await snapshot.ref.getDownloadURL();
+  }
+
   // Stream user profile for real-time updates
   Stream<User?> streamUserProfile(String userId) {
     return _db.collection('users').doc(userId).snapshots().map((doc) {
@@ -42,16 +54,21 @@ class DatabaseService {
     });
   }
 
-  // Update streak
   Future<void> updateStreak(String userId, int newStreak) async {
-    final userDoc = _db.collection('users').doc(userId);
-    final docSnapshot = await userDoc.get();
+    await _db.collection('users').doc(userId).update({'streak': newStreak});
+  }
 
-    if (docSnapshot.exists) {
-      await userDoc.update({
-        'streak': newStreak,
-      });
-    }
+  Future<void> updateLeaderboardData(String userId, Map<String, dynamic> data) async {
+    await _db.collection('users').doc(userId).update(data);
+  }
+
+  // Denormalize today's mood onto the user's public profile so friends can see
+  // it in the friend circles without reading the owner-only `logs` collection.
+  Future<void> updateUserMood(String userId, double moodScore, String dateStr) async {
+    await _db.collection('users').doc(userId).update({
+      'moodScore': moodScore,
+      'moodDate': dateStr,
+    });
   }
 
   // ==========================================
@@ -82,6 +99,11 @@ class DatabaseService {
     await _db.collection('tasks').doc(taskId).update({
       'isCompleted': isCompleted,
     });
+  }
+
+  // Update task fields
+  Future<void> updateTask(Task task) async {
+    await _db.collection('tasks').doc(task.id).update(task.toMap());
   }
 
   // Delete task
@@ -116,9 +138,26 @@ class DatabaseService {
     return docRef.id;
   }
 
-  // Update a mood & sleep log entry
+  // Update a mood & sleep log entry (full overwrite)
   Future<void> updateLogEntry(LogEntry entry) async {
     await _db.collection('logs').doc(entry.id).update(entry.toMap());
+  }
+
+  // Patch specific fields on an existing log document (used to update mood or sleep independently)
+  Future<void> patchLogEntry(String logId, Map<String, dynamic> fields) async {
+    await _db.collection('logs').doc(logId).update(fields);
+  }
+
+  // Upsert mood or sleep fields using a deterministic doc ID ({userId}_{YYYY-MM-DD}).
+  // set+merge creates the doc on first write and updates only the supplied fields on
+  // subsequent writes — the other mode's data is physically untouched.
+  Future<void> upsertModeLog(String userId, DateTime date, Map<String, dynamic> modeFields) async {
+    final d = '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+    final docId = '${userId}_$d';
+    await _db.collection('logs').doc(docId).set(
+      {'userId': userId, 'date': Timestamp.fromDate(DateTime(date.year, date.month, date.day)), ...modeFields},
+      SetOptions(merge: true),
+    );
   }
 
   // Stream logs for progressive reports and charts
@@ -135,59 +174,132 @@ class DatabaseService {
     });
   }
 
+  // Stream shared log entries from a user's friends (up to 10 friend IDs).
+  // Filters isSharedWithFriends client-side to avoid a new composite index.
+  Stream<List<LogEntry>> streamFriendsSharedLogs(List<String> friendIds) {
+    if (friendIds.isEmpty) return Stream.value([]);
+    final ids = friendIds.take(10).toList();
+    return _db
+        .collection('logs')
+        .where('userId', whereIn: ids)
+        .snapshots()
+        .map((snap) {
+      final result = snap.docs
+          .map((d) => LogEntry.fromMap(d.data(), d.id))
+          .where((l) => l.isSharedWithFriends)
+          .toList();
+      result.sort((a, b) => b.date.compareTo(a.date));
+      return result;
+    });
+  }
+
 
 
   // ==========================================
   // WATER INTAKE OPERATIONS
   // ==========================================
 
-  Future<void> updateWaterIntake(String userId, int amount) async {
-    final userDoc = _db.collection('users').doc(userId);
-    final docSnapshot = await userDoc.get();
+  Future<void> updateWaterIntake(String userId, int amount, String dateStr) async {
+    await _db.collection('users').doc(userId).update({
+      'waterIntake': FieldValue.increment(amount),
+      'waterIntakeDate': dateStr,
+    });
+  }
 
-    if (docSnapshot.exists) {
-      final currentWater = docSnapshot.data()?['waterIntake'] ?? 0;
-      int newWater = currentWater + amount;
-      if (newWater < 0) newWater = 0;
-      
-      await userDoc.update({
-        'waterIntake': newWater,
-      });
-    }
+  Future<void> setWaterIntake(String userId, int amount, String dateStr) async {
+    await _db.collection('users').doc(userId).update({
+      'waterIntake': amount.clamp(0, 99999),
+      'waterIntakeDate': dateStr,
+    });
   }
 
   Future<void> updateWaterGoal(String userId, int goal) async {
-    final userDoc = _db.collection('users').doc(userId);
-    final docSnapshot = await userDoc.get();
-
-    if (docSnapshot.exists) {
-      await userDoc.update({
-        'waterGoal': goal,
-      });
-    }
+    await _db.collection('users').doc(userId).update({'waterGoal': goal});
   }
 
   // ==========================================
   // COMMUNITY OPERATIONS
   // ==========================================
 
-  Future<void> addFriend(String currentUserId, String friendUsername) async {
-    // 1. Find the friend by username
-    final snapshot = await _db
+  // ==========================================
+  // FRIEND REQUEST OPERATIONS (FR_502 / FR_503)
+  // ==========================================
+
+  // Send a friend request by username; throws descriptive exceptions on failure
+  Future<void> sendFriendRequest(User fromUser, String toUsername) async {
+    // 1. Find target user by username
+    final snap = await _db
         .collection('users')
-        .where('username', isEqualTo: friendUsername)
+        .where('username', isEqualTo: toUsername)
         .limit(1)
         .get();
+    if (snap.docs.isEmpty) throw Exception('User not found');
 
-    if (snapshot.docs.isNotEmpty) {
-      final friendId = snapshot.docs.first.id;
-      
-      // 2. Add friendId to current user's friendsIds list
-      await _db.collection('users').doc(currentUserId).update({
-        'friendsIds': FieldValue.arrayUnion([friendId])
+    final toDoc = snap.docs.first;
+    final toId = toDoc.id;
+
+    if (toId == fromUser.id) throw Exception('Cannot add yourself');
+
+    // 2. Already friends?
+    if (fromUser.friendsIds.contains(toId)) throw Exception('Already friends');
+
+    // 3. Duplicate pending request?
+    final existing = await _db
+        .collection('friendRequests')
+        .where('fromId', isEqualTo: fromUser.id)
+        .where('toId', isEqualTo: toId)
+        .where('status', isEqualTo: 'pending')
+        .limit(1)
+        .get();
+    if (existing.docs.isNotEmpty) throw Exception('Request already sent');
+
+    // 4. Create the request
+    final request = FriendRequest(
+      fromId: fromUser.id,
+      fromUsername: fromUser.username,
+      fromAvatarUrl: fromUser.avatarUrl,
+      toId: toId,
+    );
+    await _db.collection('friendRequests').add(request.toMap());
+  }
+
+  // Stream incoming pending requests for the current user
+  Stream<List<FriendRequest>> streamIncomingRequests(String userId) {
+    return _db
+        .collection('friendRequests')
+        .where('toId', isEqualTo: userId)
+        .where('status', isEqualTo: 'pending')
+        .snapshots()
+        .map((snap) => snap.docs
+            .map((d) => FriendRequest.fromMap(d.data(), d.id))
+            .toList());
+  }
+
+  // Accept or reject a friend request
+  Future<void> respondToFriendRequest(
+    String requestId,
+    String fromId,
+    String toId,
+    bool accept,
+  ) async {
+    if (accept) {
+      // Mutual add
+      final batch = _db.batch();
+      batch.update(_db.collection('users').doc(toId), {
+        'friendsIds': FieldValue.arrayUnion([fromId]),
       });
+      batch.update(_db.collection('users').doc(fromId), {
+        'friendsIds': FieldValue.arrayUnion([toId]),
+      });
+      batch.update(_db.collection('friendRequests').doc(requestId), {
+        'status': 'accepted',
+      });
+      await batch.commit();
     } else {
-      throw Exception('User not found');
+      await _db
+          .collection('friendRequests')
+          .doc(requestId)
+          .update({'status': 'rejected'});
     }
   }
 
@@ -210,20 +322,66 @@ class DatabaseService {
   }
 
   // ==========================================
-  // LEADERBOARD OPERATION
+  // NOTIFICATION OPERATIONS (FR_902, FR_903)
   // ==========================================
 
-  // Stream top users ranked by score
-  Stream<List<User>> streamLeaderboard({int limit = 10}) {
+  Future<void> addNotification(AppNotification notif) async {
+    await _db.collection('notifications').add(notif.toMap());
+  }
+
+  Stream<List<AppNotification>> streamNotifications(String userId) {
     return _db
-        .collection('users')
-        .orderBy('score', descending: true)
-        .limit(limit)
+        .collection('notifications')
+        .where('userId', isEqualTo: userId)
+        .orderBy('createdAt', descending: true)
+        .snapshots()
+        .map((snap) => snap.docs
+            .map((d) => AppNotification.fromMap(d.data(), d.id))
+            .toList());
+  }
+
+  Future<void> markNotificationRead(String notifId) async {
+    await _db.collection('notifications').doc(notifId).update({'isRead': true});
+  }
+
+  Future<void> markAllNotificationsRead(String userId) async {
+    final snap = await _db
+        .collection('notifications')
+        .where('userId', isEqualTo: userId)
+        .where('isRead', isEqualTo: false)
+        .get();
+    final batch = _db.batch();
+    for (final doc in snap.docs) {
+      batch.update(doc.reference, {'isRead': true});
+    }
+    await batch.commit();
+  }
+
+  // ==========================================
+  // PRODUCTIVITY OPERATIONS
+  // ==========================================
+
+  // Upsert today's productivity record using a deterministic doc ID
+  Future<void> saveProductivityRecord(ProductivityRecord record) async {
+    final docId = '${record.userId}_${record.date}';
+    await _db.collection('productivity').doc(docId).set(
+      record.toMap(),
+      SetOptions(merge: true),
+    );
+  }
+
+  // Stream all productivity records for a user, sorted by date ascending
+  Stream<List<ProductivityRecord>> streamProductivityRecords(String userId) {
+    return _db
+        .collection('productivity')
+        .where('userId', isEqualTo: userId)
         .snapshots()
         .map((snapshot) {
-      return snapshot.docs
-          .map((doc) => User.fromMap(doc.data(), doc.id))
+      final records = snapshot.docs
+          .map((doc) => ProductivityRecord.fromMap(doc.data(), doc.id))
           .toList();
+      records.sort((a, b) => a.date.compareTo(b.date));
+      return records;
     });
   }
 }

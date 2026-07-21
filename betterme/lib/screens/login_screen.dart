@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/app_provider.dart';
 import '../theme.dart';
-import 'main_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -63,13 +62,7 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
       } else {
         await context.read<AppProvider>().registerWithEmail(email, password, username);
       }
-
-      if (mounted) {
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(builder: (_) => const MainScreen()),
-        );
-      }
+      // No manual navigation — AuthGate swaps to MainScreen when auth state changes.
     } catch (e) {
       _showError(e.toString().split(']').last.trim());
     } finally {
@@ -81,14 +74,31 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
     setState(() => _isLoading = true);
     try {
       await context.read<AppProvider>().loginWithGoogle();
+      // No manual navigation — AuthGate swaps to MainScreen when auth state changes.
+    } catch (e) {
+      debugPrint('Google Sign-In error: $e');
+      _showError('Google Sign-In failed: $e');
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  void _sendPasswordReset() async {
+    final email = _emailController.text.trim();
+    if (email.isEmpty) {
+      _showError('Enter your email address first.');
+      return;
+    }
+    setState(() => _isLoading = true);
+    try {
+      await context.read<AppProvider>().sendPasswordResetEmail(email);
       if (mounted) {
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(builder: (_) => const MainScreen()),
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Password reset email sent. Check your inbox.')),
         );
       }
     } catch (e) {
-      _showError('Google Sign-In failed or was canceled.');
+      _showError('Could not send reset email. Check the address and try again.');
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -173,9 +183,7 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
       children: [
         // Logo Icon
         Container(
-          padding: const EdgeInsets.all(14),
           decoration: BoxDecoration(
-            color: AppTheme.primaryContainer,
             borderRadius: BorderRadius.circular(16),
             boxShadow: [
               BoxShadow(
@@ -185,15 +193,19 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
               ),
             ],
           ),
-          child: const Icon(
-            Icons.bubble_chart,
-            color: Colors.white,
-            size: 32,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(16),
+            child: Image.asset(
+              'assets/icon/Icon.png',
+              width: 64,
+              height: 64,
+              fit: BoxFit.cover,
+            ),
           ),
         ),
         const SizedBox(height: 20),
         const Text(
-          'betterME',
+          'BetterME',
           style: TextStyle(
             fontSize: 28,
             fontWeight: FontWeight.w700,
@@ -262,9 +274,7 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
               _buildFieldLabel('Password'),
               if (_isLogin)
                 GestureDetector(
-                  onTap: () {
-                    // Could add forgot password functionality
-                  },
+                  onTap: _sendPasswordReset,
                   child: const Text(
                     'Forgot Password?',
                     style: TextStyle(

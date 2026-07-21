@@ -175,18 +175,22 @@ class DatabaseService {
   }
 
   // Stream shared log entries from a user's friends (up to 10 friend IDs).
-  // Filters isSharedWithFriends client-side to avoid a new composite index.
+  // The isSharedWithFriends == true filter MUST be part of the query (not just
+  // client-side): the security rule only allows reading a friend's log when it
+  // is shared, and Firestore rules are not filters — an unconstrained query
+  // would be rejected wholesale. Requires the composite index in
+  // firestore.indexes.json (isSharedWithFriends + userId). Sorted client-side.
   Stream<List<LogEntry>> streamFriendsSharedLogs(List<String> friendIds) {
     if (friendIds.isEmpty) return Stream.value([]);
     final ids = friendIds.take(10).toList();
     return _db
         .collection('logs')
         .where('userId', whereIn: ids)
+        .where('isSharedWithFriends', isEqualTo: true)
         .snapshots()
         .map((snap) {
       final result = snap.docs
           .map((d) => LogEntry.fromMap(d.data(), d.id))
-          .where((l) => l.isSharedWithFriends)
           .toList();
       result.sort((a, b) => b.date.compareTo(a.date));
       return result;
@@ -383,5 +387,26 @@ class DatabaseService {
       records.sort((a, b) => a.date.compareTo(b.date));
       return records;
     });
+  }
+
+  // ==========================================
+  // AI INSIGHT CACHE
+  // ==========================================
+  // Client-side cache (no Cloud Function): the most recent AI insight is stored
+  // per user so the dashboard loads instantly and Gemini is only called when the
+  // user's recent data changes. One doc per user: `${userId}_latest`.
+
+  Future<void> saveInsight(String userId, AIInsight insight) async {
+    await _db.collection('insights').doc('${userId}_latest').set(
+      {'userId': userId, ...insight.toMap()},
+      SetOptions(merge: true),
+    );
+  }
+
+  Future<AIInsight?> getCachedInsight(String userId) async {
+    final doc = await _db.collection('insights').doc('${userId}_latest').get();
+    final data = doc.data();
+    if (data == null) return null;
+    return AIInsight.fromMap(data);
   }
 }

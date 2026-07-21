@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import '../models/models.dart';
 import '../providers/app_provider.dart';
@@ -53,6 +54,16 @@ class _DailyLogTabState extends State<DailyLogTab> {
   int _sleepQuality = 0; // 0 = unset; 2,4,6,8,10 for Restless→Deep
   bool _hadNightmare = false;
 
+  // ── Date navigation ───────────────────────────────────
+  DateTime _selectedDate = DateTime.now();
+
+  bool get _isToday {
+    final now = DateTime.now();
+    return _selectedDate.year == now.year &&
+        _selectedDate.month == now.month &&
+        _selectedDate.day == now.day;
+  }
+
   // ── Pre-population tracking ───────────────────────────
   String _loadedForDate = '';
   double _prevMoodScore = 0.0;
@@ -85,13 +96,46 @@ class _DailyLogTabState extends State<DailyLogTab> {
     }
   }
 
-  // ─────────────────────────────── LOAD TODAY ────────────────────────────
+  // ─────────────────────────────── DATE NAV ──────────────────────────────
 
-  void _loadTodayValues(AppProvider provider) {
-    final now = DateTime.now();
+  String get _dateKey =>
+      '${_selectedDate.year}-${_selectedDate.month.toString().padLeft(2, '0')}-${_selectedDate.day.toString().padLeft(2, '0')}';
+
+  void _changeDate(int days, AppProvider provider) {
+    final candidate = DateTime(
+        _selectedDate.year, _selectedDate.month, _selectedDate.day + days);
+    final today = DateTime.now();
+    final todayStart = DateTime(today.year, today.month, today.day);
+    if (candidate.isAfter(todayStart)) return;
+    setState(() {
+      _selectedDate = candidate;
+      _loadedForDate = '';
+      _prevMoodScore = 0.0;
+      _prevSleepHours = 0.0;
+      // Reset form fields to defaults before loading new date
+      _selectedMoodEmoji = null;
+      _moodScore = 5.0;
+      _selectedActivities.clear();
+      _showOthersInput = false;
+      _othersController.clear();
+      _selectedSymptoms.clear();
+      _symptomNotesController.clear();
+      _symptomSeverity = 3;
+      _sleepHours = 7.0;
+      _sleepQuality = 0;
+      _hadNightmare = false;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _loadValuesForDate(provider, candidate);
+    });
+  }
+
+  // ─────────────────────────────── LOAD DATE ─────────────────────────────
+
+  void _loadValuesForDate(AppProvider provider, DateTime date) {
     LogEntry? todayLog;
     for (final l in provider.logs) {
-      if (l.date.year == now.year && l.date.month == now.month && l.date.day == now.day) {
+      if (l.date.year == date.year && l.date.month == date.month && l.date.day == date.day) {
         todayLog = l;
         break;
       }
@@ -168,7 +212,7 @@ class _DailyLogTabState extends State<DailyLogTab> {
         notesText = _symptomNotesController.text.trim();
       }
 
-      await provider.upsertModeLog({
+      await provider.saveLogFields(_selectedDate, {
         'previousMoodScore': hasMoodChange ? _prevMoodScore : 0.0,
         'moodScore': newScore,
         'emotions': _selectedSymptoms.toList(),
@@ -183,7 +227,7 @@ class _DailyLogTabState extends State<DailyLogTab> {
       final prevForDisplay = _prevSleepHours;
       final hasSleepChange = _prevSleepHours > 0 && _prevSleepHours != newHours;
 
-      await provider.upsertModeLog({
+      await provider.saveLogFields(_selectedDate, {
         'previousSleepHours': hasSleepChange ? _prevSleepHours : 0.0,
         'sleepHours': newHours,
         'sleepQuality': _sleepQuality.clamp(0, 10),
@@ -219,12 +263,10 @@ class _DailyLogTabState extends State<DailyLogTab> {
   @override
   Widget build(BuildContext context) {
     final provider = context.watch<AppProvider>();
-    final now = DateTime.now();
-    final todayStr = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
-    if (_loadedForDate != todayStr && provider.logs.isNotEmpty) {
-      _loadedForDate = todayStr;
+    if (_loadedForDate != _dateKey && provider.logs.isNotEmpty) {
+      _loadedForDate = _dateKey;
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _loadTodayValues(provider);
+        if (mounted) _loadValuesForDate(provider, _selectedDate);
       });
     }
 
@@ -234,6 +276,8 @@ class _DailyLogTabState extends State<DailyLogTab> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            _buildDateNav(provider),
+            const SizedBox(height: 12),
             _buildModeToggle(),
             const SizedBox(height: 16),
             _buildTodayBanner(),
@@ -274,6 +318,29 @@ class _DailyLogTabState extends State<DailyLogTab> {
 
   // ─────────────────────────────── SHARED WIDGETS ────────────────────────
 
+  Widget _buildDateNav(AppProvider provider) {
+    final label = _isToday
+        ? 'Today'
+        : DateFormat('MMM d, yyyy').format(_selectedDate);
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        IconButton(
+          icon: const Icon(Icons.chevron_left),
+          color: AppTheme.onSurface,
+          onPressed: () => _changeDate(-1, provider),
+        ),
+        Text(label,
+            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+        IconButton(
+          icon: Icon(Icons.chevron_right,
+              color: _isToday ? AppTheme.outlineVariant : AppTheme.onSurface),
+          onPressed: _isToday ? null : () => _changeDate(1, provider),
+        ),
+      ],
+    );
+  }
+
   Widget _buildTodayBanner() {
     final hasMood = _prevMoodScore > 0;
     final hasSleep = _prevSleepHours > 0;
@@ -294,7 +361,7 @@ class _DailyLogTabState extends State<DailyLogTab> {
           const SizedBox(width: 8),
           Expanded(
             child: Text(
-              'Updating today\'s entry · ${parts.join('  ·  ')}',
+              'Updating ${_isToday ? "today's" : DateFormat("MMM d").format(_selectedDate)} entry · ${parts.join('  ·  ')}',
               style: const TextStyle(fontSize: 12, color: AppTheme.onSurface),
             ),
           ),

@@ -3,9 +3,9 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart' as firebase_auth;
 import 'package:google_sign_in/google_sign_in.dart';
-import 'package:pedometer/pedometer.dart';
 import '../models/models.dart';
 import '../services/database_service.dart';
+import '../services/notification_service.dart';
 
 class AppProvider with ChangeNotifier {
   final DatabaseService _dbService = DatabaseService();
@@ -20,6 +20,10 @@ class AppProvider with ChangeNotifier {
   List<LogEntry> friendsSharedLogs = [];
   List<FriendRequest> incomingRequests = [];
   List<ProductivityRecord> productivityRecords = [];
+  List<AppNotification> notifications = [];
+
+  int get unreadNotificationCount =>
+      notifications.where((n) => !n.isRead).length;
 
   // Friends-only leaderboard: the current user is ranked against the friends
   // they've actually added/accepted — you must be friends to see someone's
@@ -41,11 +45,6 @@ class AppProvider with ChangeNotifier {
     return idx >= 0 ? idx + 1 : 0;
   }
 
-  // Pedometer State
-  int currentSteps = 0;
-  StreamSubscription<StepCount>? _stepCountStream;
-  StreamSubscription<PedestrianStatus>? _pedestrianStatusStream;
-
   // Active Stream Subscriptions
   StreamSubscription? _userSub;
   StreamSubscription? _tasksSub;
@@ -55,26 +54,13 @@ class AppProvider with ChangeNotifier {
   StreamSubscription? _friendsLogsSub;
   StreamSubscription? _productivitySub;
   StreamSubscription? _requestsSub;
+  StreamSubscription? _notificationsSub;
 
   // Skip first task-stream emission (initial load); only save on user changes
   bool _tasksInitialized = false;
 
   AppProvider() {
     _initAuthListener();
-    _initPedometer();
-  }
-
-  void _initPedometer() {
-    try {
-      _stepCountStream = Pedometer.stepCountStream.listen((StepCount event) {
-        currentSteps = event.steps;
-        notifyListeners();
-      }, onError: (error) {
-        debugPrint("Pedometer error: $error");
-      });
-    } catch (e) {
-      debugPrint("Failed to initialize pedometer: $e");
-    }
   }
 
   // Listen to Firebase Auth state changes
@@ -90,6 +76,7 @@ class AppProvider with ChangeNotifier {
         friendsSharedLogs = [];
         incomingRequests = [];
         productivityRecords = [];
+        notifications = [];
         _tasksInitialized = false;
         notifyListeners();
       } else {
@@ -118,6 +105,10 @@ class AppProvider with ChangeNotifier {
     currentUser = profile;
     _initUserListeners(userId);
     notifyListeners();
+    // Request OS notification permission on first login if notifications are enabled
+    if (profile.notificationsEnabled) {
+      NotificationService.requestPermission();
+    }
   }
 
   // Initialize listeners for logged-in user
@@ -184,6 +175,13 @@ class AppProvider with ChangeNotifier {
       incomingRequests = requests;
       notifyListeners();
     }, onError: (e) => debugPrint('[Firestore] incoming requests stream error: $e'));
+
+    // 7. Listen to In-App Notifications (FR_902, FR_903)
+    _notificationsSub =
+        _dbService.streamNotifications(userId).listen((notifList) {
+      notifications = notifList;
+      notifyListeners();
+    }, onError: (e) => debugPrint('[Firestore] notifications stream error: $e'));
   }
 
   void _cancelSubscriptions() {
@@ -195,6 +193,7 @@ class AppProvider with ChangeNotifier {
     _friendsLogsSub?.cancel();
     _productivitySub?.cancel();
     _requestsSub?.cancel();
+    _notificationsSub?.cancel();
   }
 
   // Detect incomplete tasks past their due date; reset both streaks if found.
@@ -344,6 +343,30 @@ class AppProvider with ChangeNotifier {
 
     if (newStreak != currentUser!.streak) {
       await _dbService.updateStreak(currentUser!.id, newStreak);
+      await _maybeSendStreakMilestone(newStreak);
+    }
+  }
+
+  static const _streakMilestones = {7, 14, 30, 60, 100};
+
+  Future<void> _maybeSendStreakMilestone(int streak) async {
+    if (currentUser == null) return;
+    if (!_streakMilestones.contains(streak)) return;
+
+    // OS banner (FR_902)
+    if (currentUser!.streakAlertsNotif) {
+      await NotificationService.showStreakMilestone(streak);
+    }
+
+    // Persistent in-app notification
+    if (currentUser!.streakAlertsNotif) {
+      await _dbService.addNotification(AppNotification(
+        userId: currentUser!.id,
+        type: 'streak_milestone',
+        title: '$streak-Day Streak!',
+        body: "You've logged $streak days in a row — amazing consistency!",
+        createdAt: DateTime.now(),
+      ));
     }
   }
 
@@ -366,7 +389,13 @@ class AppProvider with ChangeNotifier {
       repeatInterval: repeatInterval,
     );
 
-    await _dbService.addTask(task);
+    final id = await _dbService.addTask(task);
+    if (currentUser!.notificationsEnabled && reminderTime != null) {
+      await NotificationService.scheduleTaskReminder(
+          Task(id: id, userId: task.userId, title: task.title,
+               dueDate: task.dueDate, reminderTime: task.reminderTime,
+               repeatInterval: task.repeatInterval));
+    }
   }
 
   Future<void> toggleTask(String id) async {
@@ -374,6 +403,8 @@ class AppProvider with ChangeNotifier {
     if (index != -1) {
       final newStatus = !tasks[index].isCompleted;
       await _dbService.toggleTask(id, newStatus);
+      // Cancel the OS reminder when the task is marked complete
+      if (newStatus) await NotificationService.cancelTaskReminder(id);
       // Completing a task advances the task streak; unchecking reverts it.
       if (currentUser != null) {
         final newTaskStreak = (currentUser!.taskStreak + (newStatus ? 1 : -1)).clamp(0, 9999);
@@ -386,9 +417,15 @@ class AppProvider with ChangeNotifier {
   Future<void> updateTask(Task task) async {
     if (task.id.isEmpty || task.title.trim().isEmpty) return;
     await _dbService.updateTask(task);
+    // Re-schedule with updated fields (cancel old, schedule new if applicable)
+    await NotificationService.cancelTaskReminder(task.id);
+    if (currentUser?.notificationsEnabled == true && task.reminderTime != null) {
+      await NotificationService.scheduleTaskReminder(task);
+    }
   }
 
   Future<void> deleteTask(String id) async {
+    await NotificationService.cancelTaskReminder(id);
     await _dbService.deleteTask(id);
   }
 
@@ -549,6 +586,53 @@ class AppProvider with ChangeNotifier {
   Future<void> respondToRequest(String requestId, String fromId, bool accept) async {
     if (currentUser == null) return;
     await _dbService.respondToFriendRequest(requestId, fromId, currentUser!.id, accept);
+    // FR_903: notify the sender that their request was accepted
+    if (accept) {
+      await _dbService.addNotification(AppNotification(
+        userId: fromId,
+        type: 'friend_accepted',
+        title: 'Friend Request Accepted',
+        body: '${currentUser!.username} accepted your friend request!',
+        createdAt: DateTime.now(),
+      ));
+    }
+  }
+
+  // ==========================================
+  // NOTIFICATION METHODS (FR_901–FR_904)
+  // ==========================================
+
+  Future<void> markNotificationRead(String notifId) async {
+    await _dbService.markNotificationRead(notifId);
+  }
+
+  Future<void> markAllNotificationsRead() async {
+    if (currentUser == null) return;
+    await _dbService.markAllNotificationsRead(currentUser!.id);
+  }
+
+  Future<void> updateNotificationPrefs({
+    bool? notificationsEnabled,
+    bool? friendActivityNotif,
+    bool? streakAlertsNotif,
+  }) async {
+    if (currentUser == null) return;
+    final updates = <String, dynamic>{};
+    if (notificationsEnabled != null) {
+      updates['notificationsEnabled'] = notificationsEnabled;
+    }
+    if (friendActivityNotif != null) {
+      updates['friendActivityNotif'] = friendActivityNotif;
+    }
+    if (streakAlertsNotif != null) {
+      updates['streakAlertsNotif'] = streakAlertsNotif;
+    }
+    if (updates.isEmpty) return;
+    // Request OS permission when the master toggle is turned on
+    if (notificationsEnabled == true) {
+      await NotificationService.requestPermission();
+    }
+    await _dbService.updateLeaderboardData(currentUser!.id, updates);
   }
 
   // ==========================================
@@ -562,6 +646,15 @@ class AppProvider with ChangeNotifier {
       await _dbService.saveUserProfile(currentUser!);
       notifyListeners();
     }
+  }
+
+  // Uploads a photo for a journal entry and returns its download URL. The caller
+  // is responsible for persisting the URL onto the log (via saveLogFields).
+  Future<String> uploadJournalPhoto(File imageFile, DateTime date) async {
+    if (currentUser == null) return '';
+    final dateKey =
+        '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+    return _dbService.uploadJournalPhoto(imageFile, currentUser!.id, dateKey);
   }
 
   // ==========================================
@@ -587,8 +680,6 @@ class AppProvider with ChangeNotifier {
   @override
   void dispose() {
     _cancelSubscriptions();
-    _stepCountStream?.cancel();
-    _pedestrianStatusStream?.cancel();
     super.dispose();
   }
 }

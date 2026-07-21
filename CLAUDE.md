@@ -135,26 +135,23 @@ All models have:
 - **Google Sign-In**: Requires Google OAuth configuration (iOS/Android/Web)
 - Auto-creates user profile on first login if none exists
 
-### Firestore Security Rules (Recommended)
+### Firestore Security Rules
+
+The authoritative rules live in **[`betterme/firestore.rules`](betterme/firestore.rules)** (version-controlled and referenced from `firebase.json`). Deploy with:
+
+```bash
+cd betterme
+firebase deploy --only firestore:rules,firestore:indexes
 ```
-rules_version = '2';
-service cloud.firestore {
-  match /databases/{database}/documents {
-    match /users/{userId} {
-      allow read, write: if request.auth.uid == userId;
-    }
-    match /tasks/{document=**} {
-      allow read, write: if request.auth.uid == resource.data.userId;
-    }
-    match /taskCategories/{document=**} {
-      allow read, write: if request.auth.uid == resource.data.userId;
-    }
-    match /logs/{document=**} {
-      allow read, write: if request.auth.uid == resource.data.userId;
-    }
-  }
-}
-```
+
+**Model (as of 2026-07-01):**
+- **Private, owner-only** (`resource.data.userId == request.auth.uid`): `logs`, `tasks`, `taskCategories`, `productivity`. A user can never read another user's mood/sleep logs — this is what enforces privacy at the data layer, independent of the app UI.
+- **`users` profiles**: readable by any signed-in user (the global leaderboard, "add friend by username" search, and the friends list all read other users' profile docs). Profile docs hold no private logs, so this is intentional.
+- **`friendRequests`**: visible only to the sender or recipient.
+
+> **⚠️ Known limitation (friendship is not cryptographically two-sided):** the `users` update rule permits *any* signed-in user to modify **only** the `friendsIds` field of *another* user's doc. This is required so that accepting a friend request can add each user to the other's friends list without a Cloud Function. It cannot touch any other field (scores/usernames stay protected), but it does mean a client could unilaterally add itself to someone's `friendsIds`. Acceptable for the current client-only phase; a proper fix would move the mutual-add into a Cloud Function (or callable) and lock `friendsIds` to server writes only. See [`friendRequests` handling in `database_service.dart`](betterme/lib/services/database_service.dart).
+
+The composite index required by the logs query (`where userId` + `orderBy date desc`) is declared in **[`betterme/firestore.indexes.json`](betterme/firestore.indexes.json)**.
 
 ### Firebase Storage Rules (Avatars)
 ```

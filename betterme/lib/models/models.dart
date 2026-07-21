@@ -19,6 +19,10 @@ class User {
   int taskStreak;              // increments per task completed; resets on overdue
   double moodLeaderboardScore; // avg mood 0.0–10.0
   double sleepLeaderboardScore; // avg sleep quality 0.0–10.0
+  // FR_904 — notification preferences
+  bool notificationsEnabled; // master switch for task-reminder local notifications
+  bool friendActivityNotif;  // in-app friend-accepted notifications
+  bool streakAlertsNotif;    // in-app and OS streak milestone notifications
 
   User({
     required this.id,
@@ -35,6 +39,9 @@ class User {
     this.taskStreak = 0,
     this.moodLeaderboardScore = 0.0,
     this.sleepLeaderboardScore = 0.0,
+    this.notificationsEnabled = true,
+    this.friendActivityNotif = true,
+    this.streakAlertsNotif = true,
   });
 
   static String todayDateString() {
@@ -59,6 +66,9 @@ class User {
       'taskStreak': taskStreak,
       'moodLeaderboardScore': moodLeaderboardScore,
       'sleepLeaderboardScore': sleepLeaderboardScore,
+      'notificationsEnabled': notificationsEnabled,
+      'friendActivityNotif': friendActivityNotif,
+      'streakAlertsNotif': streakAlertsNotif,
     };
   }
 
@@ -90,6 +100,9 @@ class User {
       taskStreak: map['taskStreak'] as int? ?? 0,
       moodLeaderboardScore: (map['moodLeaderboardScore'] as num?)?.toDouble() ?? 0.0,
       sleepLeaderboardScore: (map['sleepLeaderboardScore'] as num?)?.toDouble() ?? 0.0,
+      notificationsEnabled: map['notificationsEnabled'] as bool? ?? true,
+      friendActivityNotif: map['friendActivityNotif'] as bool? ?? true,
+      streakAlertsNotif: map['streakAlertsNotif'] as bool? ?? true,
     );
   }
 }
@@ -295,6 +308,7 @@ class LogEntry {
   double previousMoodScore;
   double previousSleepHours;
   bool isSharedWithFriends; // whether this entry is visible to mutual friends
+  String photoUrl; // optional attached photo for the day; empty = none
 
   LogEntry({
     this.id = '',
@@ -310,6 +324,7 @@ class LogEntry {
     this.previousMoodScore = 0.0,
     this.previousSleepHours = 0.0,
     this.isSharedWithFriends = false,
+    this.photoUrl = '',
   });
 
   Map<String, dynamic> toMap() {
@@ -326,6 +341,7 @@ class LogEntry {
       'previousMoodScore': previousMoodScore,
       'previousSleepHours': previousSleepHours,
       'isSharedWithFriends': isSharedWithFriends,
+      'photoUrl': photoUrl,
     };
   }
 
@@ -344,6 +360,49 @@ class LogEntry {
       previousMoodScore: (map['previousMoodScore'] as num?)?.toDouble() ?? 0.0,
       previousSleepHours: (map['previousSleepHours'] as num?)?.toDouble() ?? 0.0,
       isSharedWithFriends: map['isSharedWithFriends'] as bool? ?? false,
+      photoUrl: map['photoUrl'] ?? '',
+    );
+  }
+}
+
+// In-app notifications stored in Firestore (FR_902, FR_903)
+class AppNotification {
+  String id;
+  String userId;
+  String type; // 'streak_milestone' | 'friend_accepted' | 'friend_request'
+  String title;
+  String body;
+  DateTime createdAt;
+  bool isRead;
+
+  AppNotification({
+    this.id = '',
+    required this.userId,
+    required this.type,
+    required this.title,
+    required this.body,
+    required this.createdAt,
+    this.isRead = false,
+  });
+
+  Map<String, dynamic> toMap() => {
+    'userId': userId,
+    'type': type,
+    'title': title,
+    'body': body,
+    'createdAt': Timestamp.fromDate(createdAt),
+    'isRead': isRead,
+  };
+
+  factory AppNotification.fromMap(Map<String, dynamic> map, String documentId) {
+    return AppNotification(
+      id: documentId,
+      userId: map['userId'] ?? '',
+      type: map['type'] ?? '',
+      title: map['title'] ?? '',
+      body: map['body'] ?? '',
+      createdAt: (map['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
+      isRead: map['isRead'] as bool? ?? false,
     );
   }
 }

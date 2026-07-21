@@ -32,6 +32,18 @@ class DatabaseService {
     return await snapshot.ref.getDownloadURL();
   }
 
+  // Upload a journal entry photo. One photo per user per day (deterministic path
+  // so re-uploading replaces the previous image).
+  Future<String> uploadJournalPhoto(File imageFile, String userId, String dateKey) async {
+    final storageRef = FirebaseStorage.instance
+        .ref()
+        .child('journal_photos')
+        .child(userId)
+        .child('$dateKey.jpg');
+    final snapshot = await storageRef.putFile(imageFile);
+    return await snapshot.ref.getDownloadURL();
+  }
+
   // Stream user profile for real-time updates
   Stream<User?> streamUserProfile(String userId) {
     return _db.collection('users').doc(userId).snapshots().map((doc) {
@@ -307,6 +319,42 @@ class DatabaseService {
           .map((doc) => User.fromMap(doc.data(), doc.id))
           .toList();
     });
+  }
+
+  // ==========================================
+  // NOTIFICATION OPERATIONS (FR_902, FR_903)
+  // ==========================================
+
+  Future<void> addNotification(AppNotification notif) async {
+    await _db.collection('notifications').add(notif.toMap());
+  }
+
+  Stream<List<AppNotification>> streamNotifications(String userId) {
+    return _db
+        .collection('notifications')
+        .where('userId', isEqualTo: userId)
+        .orderBy('createdAt', descending: true)
+        .snapshots()
+        .map((snap) => snap.docs
+            .map((d) => AppNotification.fromMap(d.data(), d.id))
+            .toList());
+  }
+
+  Future<void> markNotificationRead(String notifId) async {
+    await _db.collection('notifications').doc(notifId).update({'isRead': true});
+  }
+
+  Future<void> markAllNotificationsRead(String userId) async {
+    final snap = await _db
+        .collection('notifications')
+        .where('userId', isEqualTo: userId)
+        .where('isRead', isEqualTo: false)
+        .get();
+    final batch = _db.batch();
+    for (final doc in snap.docs) {
+      batch.update(doc.reference, {'isRead': true});
+    }
+    await batch.commit();
   }
 
   // ==========================================

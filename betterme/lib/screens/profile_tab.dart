@@ -6,7 +6,6 @@ import 'package:firebase_auth/firebase_auth.dart' as auth;
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../providers/app_provider.dart';
 import '../theme.dart';
-import 'login_screen.dart';
 
 class ProfileTab extends StatefulWidget {
   const ProfileTab({super.key});
@@ -16,10 +15,6 @@ class ProfileTab extends StatefulWidget {
 }
 
 class _ProfileTabState extends State<ProfileTab> {
-  bool _dailyReminders = true;
-  bool _friendActivity = false;
-  bool _streakAlerts = true;
-
   final ImagePicker _picker = ImagePicker();
 
   Future<void> _pickAndUploadImage(AppProvider provider) async {
@@ -301,7 +296,7 @@ class _ProfileTabState extends State<ProfileTab> {
       children: [
         _buildAccountSection(provider),
         const SizedBox(height: 16),
-        _buildNotificationsSection(context),
+        _buildNotificationsSection(context, provider),
         const SizedBox(height: 16),
         _buildSupportSection(),
       ],
@@ -332,28 +327,29 @@ class _ProfileTabState extends State<ProfileTab> {
     );
   }
 
-  Widget _buildNotificationsSection(BuildContext context) {
+  Widget _buildNotificationsSection(BuildContext context, AppProvider provider) {
+    final user = provider.currentUser!;
     return _buildCard(
       title: 'Notifications',
       icon: Icons.notifications_active,
       children: [
         _buildSwitchTile(
-          'Daily Reminders',
-          'Gentle nudges for your journal',
-          _dailyReminders,
-          (v) => setState(() => _dailyReminders = v),
+          'Task Reminders',
+          'OS alerts for tasks with a set reminder time',
+          user.notificationsEnabled,
+          (v) => provider.updateNotificationPrefs(notificationsEnabled: v),
         ),
         _buildSwitchTile(
           'Friend Activity',
-          'When friends cheer your progress',
-          _friendActivity,
-          (v) => setState(() => _friendActivity = v),
+          'When someone accepts your friend request',
+          user.friendActivityNotif,
+          (v) => provider.updateNotificationPrefs(friendActivityNotif: v),
         ),
         _buildSwitchTile(
           'Streak Alerts',
-          "Don't lose your consistency",
-          _streakAlerts,
-          (v) => setState(() => _streakAlerts = v),
+          'Celebrate 7, 14, 30, 60 and 100-day milestones',
+          user.streakAlertsNotif,
+          (v) => provider.updateNotificationPrefs(streakAlertsNotif: v),
         ),
         const SizedBox(height: 16),
         Container(
@@ -499,11 +495,8 @@ class _ProfileTabState extends State<ProfileTab> {
       children: [
         OutlinedButton.icon(
           onPressed: () {
+            // AuthGate returns to LoginScreen once sign-out completes.
             provider.logout();
-            Navigator.pushReplacement(
-              context,
-              MaterialPageRoute(builder: (_) => const LoginScreen()),
-            );
           },
           icon: const Icon(Icons.logout, color: AppTheme.error),
           label: const Text(

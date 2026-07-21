@@ -16,10 +16,11 @@ dependencies:
     sdk: flutter
   google_fonts: ^8.1.0
   google_sign_in: ^6.2.1
+  flutter_local_notifications: ^18.0.0
   image_picker: ^1.2.2
   intl: ^0.20.2
-  pedometer: ^4.2.0
   provider: ^6.1.5+1
+  timezone: ^0.10.0
 
 dev_dependencies:
   flutter_test:
@@ -29,6 +30,8 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/icon/Icon.png
 
 flutter_launcher_icons:
   image_path: "assets/icon/Icon.png"

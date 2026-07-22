@@ -1,8 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
-import '../providers/app_provider.dart';
 import '../theme.dart';
-import '../utils/image_helpers.dart';
 import 'dashboard_tab.dart';
 import 'daily_log_tab.dart';
 import 'health_tasks_tab.dart';
@@ -20,27 +17,12 @@ class MainScreen extends StatefulWidget {
 class _MainScreenState extends State<MainScreen> {
   int _currentIndex = 0;
 
-  // Tracks the avatar URL already warmed into the image cache so we only
-  // precache once per URL change instead of on every rebuild.
-  String? _preloadedAvatarUrl;
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    _preloadAvatar();
-  }
-
-  // Preload the user's avatar into Flutter's image cache as soon as it's
-  // available, so the Profile/Dashboard/Friends tabs show it instantly
-  // instead of fetching over the network when first opened.
-  void _preloadAvatar() {
-    final url = Provider.of<AppProvider>(context).currentUser?.avatarUrl;
-    if (url == null || url.isEmpty || url == _preloadedAvatarUrl) return;
-    _preloadedAvatarUrl = url;
-    final provider = imageProviderFor(url);
-    if (provider != null) precacheImage(provider, context);
-  }
-
+  // NOTE: MainScreen deliberately does NOT listen to AppProvider. It used to
+  // (to precache the avatar), which rebuilt this whole Scaffold on every
+  // provider notification — and with the pedometer stream firing constantly on
+  // a real device, those rebuilds interfered with SnackBar auto-dismiss timers
+  // (e.g. the water "Undo" bar never went away). Base64 avatars render
+  // instantly, so precaching is unnecessary.
   final List<Widget> _tabs = [
     const DashboardTab(),
     const TrendsInsightsScreen(),

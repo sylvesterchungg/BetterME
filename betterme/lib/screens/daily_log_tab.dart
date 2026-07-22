@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../models/models.dart';
 import '../providers/app_provider.dart';
 import '../theme.dart';
+import '../widgets/app_page_header.dart';
 
 // Symptom options shown in the Track Symptoms chip row
 const _kSymptoms = [
@@ -276,6 +277,8 @@ class _DailyLogTabState extends State<DailyLogTab> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            AppPageHeader(title: 'Daily Log', user: provider.currentUser),
+            const SizedBox(height: 24),
             _buildDateNav(provider),
             const SizedBox(height: 12),
             _buildModeToggle(),

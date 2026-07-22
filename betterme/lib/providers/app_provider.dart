@@ -1,11 +1,11 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart' as firebase_auth;
 import 'package:google_sign_in/google_sign_in.dart';
 import '../models/models.dart';
 import '../services/database_service.dart';
+import '../services/ai_insight_service.dart';
 import '../services/notification_service.dart';
 
 class AppProvider with ChangeNotifier {
@@ -14,6 +14,9 @@ class AppProvider with ChangeNotifier {
   final GoogleSignIn _googleSignIn = GoogleSignIn();
 
   User? currentUser;
+  // Owner-only PII (birth date, phone), kept out of the world-readable `users`
+  // doc. Backed by its own private stream (see _initUserListeners).
+  PrivateProfile privateProfile = const PrivateProfile();
   List<Task> tasks = [];
   List<TaskCategory> taskCategories = [];
   List<LogEntry> logs = [];
@@ -24,6 +27,13 @@ class AppProvider with ChangeNotifier {
   List<AppNotification> notifications = [];
   // Most recent cached AI insight (client-side cache; see AIInsightService).
   AIInsight? cachedInsight;
+  // Most recent cached AI coping suggestions (shown when rough days cluster).
+  AICopingTips? cachedCoping;
+  // Personalized morning nudge for the dashboard (client-side cached).
+  MorningNudge? morningNudge;
+  bool morningNudgeLoading = false;
+  // Guards ensureMorningNudge() so repeated dashboard rebuilds don't refire.
+  String? _nudgeHandledSignature;
 
   int get unreadNotificationCount =>
       notifications.where((n) => !n.isRead).length;
@@ -62,6 +72,7 @@ class AppProvider with ChangeNotifier {
   StreamSubscription? _productivitySub;
   StreamSubscription? _requestsSub;
   StreamSubscription? _notificationsSub;
+  StreamSubscription? _privateProfileSub;
 
 
   AppProvider() {
@@ -74,6 +85,7 @@ class AppProvider with ChangeNotifier {
       if (firebaseUser == null) {
         _cancelSubscriptions();
         currentUser = null;
+        privateProfile = const PrivateProfile();
         tasks = [];
         taskCategories = [];
         logs = [];
@@ -83,6 +95,9 @@ class AppProvider with ChangeNotifier {
         productivityRecords = [];
         notifications = [];
         cachedInsight = null;
+        cachedCoping = null;
+        morningNudge = null;
+        _nudgeHandledSignature = null;
         notifyListeners();
       } else {
         await _loadOrCreateProfile(firebaseUser);
@@ -90,28 +105,70 @@ class AppProvider with ChangeNotifier {
     });
   }
 
+  // Extra sign-up details (birth date, phone) captured in registerWithEmail and
+  // consumed once when the auth-state listener creates the new profile doc.
+  Map<String, dynamic>? _pendingProfileExtras;
+
   Future<void> _loadOrCreateProfile(firebase_auth.User firebaseUser) async {
     final userId = firebaseUser.uid;
     var profile = await _dbService.getUserProfile(userId);
-    
+
     if (profile == null) {
+      final extras = _pendingProfileExtras;
+      final pendingName = (extras?['username'] as String?)?.trim();
+
+      // Now that we're authenticated, upload the sign-up photo (if any). Storage
+      // rules require request.auth.uid == userId, which only holds here. A real
+      // Google photo is used as the fallback; otherwise blank, so the UI shows
+      // the user's initials/person-icon default instead of a stock face.
+      var avatarUrl = firebaseUser.photoURL ?? '';
+      final pendingPhoto = extras?['photo'];
+      if (pendingPhoto is File) {
+        try {
+          avatarUrl = await _dbService.uploadProfilePhoto(pendingPhoto, userId);
+        } catch (e) {
+          debugPrint('[Signup] avatar upload failed: $e');
+        }
+      }
+
       profile = User(
         id: userId,
-        username: firebaseUser.displayName ?? firebaseUser.email?.split('@')[0] ?? 'User',
-        avatarUrl: firebaseUser.photoURL ?? 'https://i.pravatar.cc/150?img=${userId.hashCode % 70 + 1}',
-        streak: 1,
+        username: (pendingName != null && pendingName.isNotEmpty)
+            ? pendingName
+            : firebaseUser.displayName ?? firebaseUser.email?.split('@')[0] ?? 'User',
+        name: (extras?['name'] as String?) ?? '',
+        avatarUrl: avatarUrl,
+        streak: 0,
         waterIntake: 0,
         friendsIds: [],
       );
       await _dbService.saveUserProfile(profile);
+
+      // PII (birth date, phone) goes into the owner-only private doc, never the
+      // world-readable `users` doc. Only write when something was provided.
+      final birthDate = extras?['birthDate'] as DateTime?;
+      final phone = (extras?['phoneNumber'] as String?) ?? '';
+      if (birthDate != null || phone.isNotEmpty) {
+        await _dbService.savePrivateProfile(
+          userId,
+          PrivateProfile(birthDate: birthDate, phoneNumber: phone),
+        );
+      }
     }
-    
+    _pendingProfileExtras = null;
+
     currentUser = profile;
     _initUserListeners(userId);
     notifyListeners();
     // Request OS notification permission on first login if notifications are enabled
     if (profile.notificationsEnabled) {
       NotificationService.requestPermission();
+    }
+    // Re-arm the recurring hydration reminder for this session. OS schedules
+    // don't reliably survive reboots/reinstalls, so we reschedule on each login
+    // based on the interval saved to the profile.
+    if (profile.hydrationReminderMinutes > 0) {
+      NotificationService.scheduleHydrationReminder(profile.hydrationReminderMinutes);
     }
   }
 
@@ -156,13 +213,24 @@ class AppProvider with ChangeNotifier {
     }, onError: (e) => debugPrint('[Firestore] taskCategories stream error: $e'));
 
     // 3. Listen to User's Logs (Sleep, Mood, Notes, Triggers)
+    //    The daily-log streak is derived purely from these dates, so recompute
+    //    it on every emission (including the initial load — this is what resets
+    //    a broken streak to 0 when the app is reopened after a missed day).
     _logsSub = _dbService.streamLogEntries(userId).listen((newLogs) {
       logs = newLogs;
       notifyListeners();
+      checkAndUpdateStreak();
     }, onError: (e) => debugPrint('[Firestore] logs stream error: $e'));
 
     // 4. Leaderboard is friends-only and derived from `currentUser` + `friends`
     //    (both kept live by the streams above), so no separate query is needed.
+
+    // 4b. Listen to the owner-only private profile (birth date, phone).
+    _privateProfileSub =
+        _dbService.streamPrivateProfile(userId).listen((profile) {
+      privateProfile = profile;
+      notifyListeners();
+    }, onError: (e) => debugPrint('[Firestore] private profile stream error: $e'));
 
     // 5. Listen to Productivity Records
     _productivitySub = _dbService.streamProductivityRecords(userId).listen((records) {
@@ -183,13 +251,25 @@ class AppProvider with ChangeNotifier {
       notifyListeners();
     }, onError: (e) => debugPrint('[Firestore] notifications stream error: $e'));
 
-    // 8. Load any cached AI insight once (client-side cache; regenerated on
-    //    demand by the Trends screen when the user's recent data changes).
+    // 8. Load any cached AI insight + coping tips once (client-side cache;
+    //    regenerated on demand by the Trends screen when recent data changes).
     _dbService.getCachedInsight(userId).then((insight) {
       cachedInsight = insight;
       notifyListeners();
     }).catchError((e) {
       debugPrint('[Firestore] cached insight load error: $e');
+    });
+    _dbService.getCachedCoping(userId).then((coping) {
+      cachedCoping = coping;
+      notifyListeners();
+    }).catchError((e) {
+      debugPrint('[Firestore] cached coping load error: $e');
+    });
+    _dbService.getCachedNudge(userId).then((nudge) {
+      morningNudge = nudge;
+      notifyListeners();
+    }).catchError((e) {
+      debugPrint('[Firestore] cached nudge load error: $e');
     });
   }
 
@@ -205,6 +285,85 @@ class AppProvider with ChangeNotifier {
     }
   }
 
+  /// Persist freshly generated coping suggestions to the client-side cache.
+  Future<void> persistCoping(AICopingTips coping) async {
+    cachedCoping = coping;
+    final userId = currentUser?.id;
+    if (userId == null) return;
+    try {
+      await _dbService.saveCoping(userId, coping);
+    } catch (e) {
+      debugPrint('[Firestore] save coping error: $e');
+    }
+  }
+
+  // ── Morning nudge ──────────────────────────────────────────────────────────
+
+  /// Most recent log that actually carries sleep or mood, and is recent enough
+  /// (within 2 days) for a "this morning" nudge to make sense.
+  LogEntry? _latestRelevantLog() {
+    LogEntry? latest;
+    for (final l in logs) {
+      if (l.sleepHours <= 0 && l.moodScore <= 0) continue;
+      if (latest == null || l.date.isAfter(latest.date)) latest = l;
+    }
+    if (latest == null) return null;
+    return DateTime.now().difference(latest.date).inDays <= 2 ? latest : null;
+  }
+
+  /// Incomplete tasks due today or already overdue (i.e. "left to do today").
+  int get _pendingTasksToday {
+    final now = DateTime.now();
+    final end = DateTime(now.year, now.month, now.day, 23, 59, 59);
+    return tasks
+        .where((t) =>
+            !t.isCompleted && (t.dueDate == null || !t.dueDate!.isAfter(end)))
+        .length;
+  }
+
+  /// Generates the morning nudge only when it's stale (guarded so repeated
+  /// dashboard rebuilds don't refire). Cheap and idempotent to call every build.
+  Future<void> ensureMorningNudge({bool force = false}) async {
+    if (currentUser == null || morningNudgeLoading) return;
+    final latest = _latestRelevantLog();
+    final sig = AIInsightService.nudgeSignatureFor(latest, _pendingTasksToday,
+        streak: currentUser?.streak);
+    if (!force) {
+      if (_nudgeHandledSignature == sig) return;
+      final cached = morningNudge;
+      final fresh = cached != null &&
+          cached.signature == sig &&
+          DateTime.now().difference(cached.generatedAt) <
+              const Duration(hours: 12);
+      if (fresh) {
+        _nudgeHandledSignature = sig;
+        return;
+      }
+    }
+    _nudgeHandledSignature = sig;
+    if (latest == null) return; // nothing personal to say yet
+    morningNudgeLoading = true;
+    notifyListeners();
+    final result = await AIInsightService.generateMorningNudge(
+      latest: latest,
+      pendingTasks: _pendingTasksToday,
+      streak: currentUser?.streak,
+    );
+    morningNudgeLoading = false;
+    if (result != null) {
+      morningNudge = result;
+      final userId = currentUser?.id;
+      if (userId != null) {
+        try {
+          await _dbService.saveNudge(userId, result);
+        } catch (e) {
+          debugPrint('[Firestore] save nudge error: $e');
+        }
+      }
+    }
+    notifyListeners();
+  }
+
   void _cancelSubscriptions() {
     _userSub?.cancel();
     _tasksSub?.cancel();
@@ -215,9 +374,13 @@ class AppProvider with ChangeNotifier {
     _productivitySub?.cancel();
     _requestsSub?.cancel();
     _notificationsSub?.cancel();
+    _privateProfileSub?.cancel();
   }
 
-  // Detect incomplete tasks past their due date; reset both streaks if found.
+  // Detect incomplete tasks past their due date; reset the task streak if found.
+  // The daily-log streak is derived purely from log dates (see _computeLogStreak)
+  // and is deliberately left untouched here — an overdue task shouldn't wipe out
+  // a logging streak.
   void _checkAndHandleOverdueTasks() {
     if (currentUser == null || tasks.isEmpty) return;
     final today = DateTime.now();
@@ -225,10 +388,9 @@ class AppProvider with ChangeNotifier {
     final hasOverdue = tasks.any(
       (t) => !t.isCompleted && t.dueDate != null && t.dueDate!.isBefore(todayStart),
     );
-    if (hasOverdue && (currentUser!.taskStreak > 0 || currentUser!.streak > 1)) {
+    if (hasOverdue && currentUser!.taskStreak > 0) {
       _dbService.updateLeaderboardData(currentUser!.id, {
         'taskStreak': 0,
-        'streak': 1,
       });
     }
   }
@@ -256,7 +418,27 @@ class AppProvider with ChangeNotifier {
     await _auth.signInWithEmailAndPassword(email: email, password: password);
   }
 
-  Future<void> registerWithEmail(String email, String password, String username) async {
+  Future<void> registerWithEmail(
+    String email,
+    String password,
+    String username, {
+    String? name,
+    DateTime? birthDate,
+    String? phoneNumber,
+    File? photo,
+  }) async {
+    // Stash the chosen username + optional extras so _loadOrCreateProfile (fired
+    // by the auth-state listener below) can persist them onto the brand-new
+    // profile document. Carrying them here avoids a race where the profile is
+    // created before updateDisplayName() has propagated, and lets the photo be
+    // uploaded once we're authenticated (Storage rules require a matching uid).
+    _pendingProfileExtras = {
+      'username': username.trim(),
+      'name': (name ?? '').trim(),
+      'birthDate': birthDate,
+      'phoneNumber': (phoneNumber ?? '').trim(),
+      'photo': photo,
+    };
     final credential = await _auth.createUserWithEmailAndPassword(email: email, password: password);
     if (credential.user != null) {
       await credential.user!.updateDisplayName(username);
@@ -296,51 +478,99 @@ class AppProvider with ChangeNotifier {
     }
   }
 
-  Future<void> checkAndUpdateStreak() async {
+  /// Update the user's real/display name on the public profile.
+  Future<void> updateName(String newName) async {
     if (currentUser == null) return;
-    
-    if (logs.isEmpty) {
-      // First log ever, streak is 1
-      await _dbService.updateStreak(currentUser!.id, 1);
-      return;
-    }
+    currentUser!.name = newName.trim();
+    await _dbService.saveUserProfile(currentUser!);
+    notifyListeners();
+  }
 
-    // Since logs are streamed ordered by date descending, logs[0] might be the one we just added if it's already in the stream.
-    // However, if checkAndUpdateStreak is called immediately after addLog (before stream updates), 
-    // logs[0] is the PREVIOUS log. Wait, we should just check the most recent log's date in `logs` before the new one is added, 
-    // or just calculate based on all logs.
-    // Let's sort logs locally just in case, but they should be sorted.
-    // Wait, if it's called AFTER `addLog` finishes, the new log might already be in the stream.
-    // To be safe, let's find the most recent log that is NOT today.
+  /// Re-authenticate an email/password user with their current password. Firebase
+  /// requires a recent login before sensitive changes like updatePassword; this
+  /// also serves to verify the old password before allowing a change. Throws a
+  /// FirebaseAuthException (e.g. 'wrong-password') on failure.
+  Future<void> reauthenticateWithPassword(String currentPassword) async {
+    final user = _auth.currentUser;
+    final email = user?.email;
+    if (user == null || email == null) {
+      throw firebase_auth.FirebaseAuthException(
+        code: 'no-current-user',
+        message: 'No signed-in email account to re-authenticate.',
+      );
+    }
+    final cred = firebase_auth.EmailAuthProvider.credential(
+      email: email,
+      password: currentPassword,
+    );
+    await user.reauthenticateWithCredential(cred);
+  }
+
+  /// Change the password. Callers must re-authenticate first
+  /// (see [reauthenticateWithPassword]) so the old password is verified.
+  Future<void> updatePassword(String newPassword) async {
+    final user = _auth.currentUser;
+    if (user == null) return;
+    await user.updatePassword(newPassword);
+  }
+
+  /// Update the owner-only private profile (birth date, phone). Passing null for
+  /// a field leaves it unchanged; pass an empty string to clear the phone
+  /// number. Writes to `privateProfile/{userId}`; the stream refreshes
+  /// `privateProfile` after the write.
+  Future<void> updateProfileDetails({DateTime? birthDate, String? phoneNumber}) async {
+    if (currentUser == null) return;
+    final updated = PrivateProfile(
+      birthDate: birthDate ?? privateProfile.birthDate,
+      phoneNumber:
+          phoneNumber != null ? phoneNumber.trim() : privateProfile.phoneNumber,
+    );
+    privateProfile = updated; // optimistic; stream will confirm
+    await _dbService.savePrivateProfile(currentUser!.id, updated);
+    notifyListeners();
+  }
+
+  /// The current daily-log streak, derived purely from the log dates: the
+  /// number of consecutive calendar days that have at least one log, ending at
+  /// today (if logged today) or yesterday (if logged yesterday but not yet
+  /// today, so the streak stays alive for the day). Returns 0 when there are no
+  /// logs, or when the most recent log is older than yesterday (streak broken).
+  int _computeLogStreak() {
+    if (logs.isEmpty) return 0;
+
+    // Collapse logs to the distinct calendar days they fall on.
+    final loggedDays = <DateTime>{
+      for (final log in logs) DateTime(log.date.year, log.date.month, log.date.day),
+    };
+
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
     final yesterday = today.subtract(const Duration(days: 1));
-    
-    // Find logs from yesterday
-    bool loggedYesterday = logs.any((log) {
-      final d = DateTime(log.date.year, log.date.month, log.date.day);
-      return d.isAtSameMomentAs(yesterday);
-    });
 
-    // Find logs from today
-    bool loggedToday = logs.any((log) {
-      final d = DateTime(log.date.year, log.date.month, log.date.day);
-      return d.isAtSameMomentAs(today);
-    });
-
-    // If we haven't logged today yet (meaning this call is about to log today, or evaluating),
-    // and we logged yesterday, streak goes up. 
-    // If we already logged today, streak stays the same (no increment).
-    // If we didn't log yesterday or today, streak resets to 1.
-    int newStreak = currentUser!.streak;
-    
-    if (loggedYesterday && !loggedToday) {
-      newStreak += 1;
-    } else if (!loggedYesterday && !loggedToday) {
-      newStreak = 1;
+    // Anchor the streak at today if logged today, otherwise yesterday. If the
+    // newest log is older than yesterday, the streak is already broken.
+    DateTime cursor;
+    if (loggedDays.contains(today)) {
+      cursor = today;
+    } else if (loggedDays.contains(yesterday)) {
+      cursor = yesterday;
+    } else {
+      return 0;
     }
-    // If loggedToday is true, we don't change the streak.
 
+    // Walk backwards day by day for as long as each day has a log.
+    int streak = 0;
+    while (loggedDays.contains(cursor)) {
+      streak++;
+      cursor = cursor.subtract(const Duration(days: 1));
+    }
+    return streak;
+  }
+
+  Future<void> checkAndUpdateStreak() async {
+    if (currentUser == null) return;
+
+    final newStreak = _computeLogStreak();
     if (newStreak != currentUser!.streak) {
       await _dbService.updateStreak(currentUser!.id, newStreak);
       await _maybeSendStreakMilestone(newStreak);
@@ -521,99 +751,6 @@ class AppProvider with ChangeNotifier {
     await checkAndUpdateStreak();
   }
 
-  // ============================================================
-  // TEMPORARY / DEV-ONLY — remove before shipping.
-  // Seeds ~[days] days of realistic, *correlated* history for the
-  // signed-in user so the trends charts and the Gemini AI insight have
-  // real data to analyze (poor sleep -> lower next-day mood, weekend
-  // mood lift, occasional nightmares, matching emotions/activities, and
-  // task-completion that tracks mood). Writes both `logs` and
-  // `productivity`, sets the streak, and mirrors today's mood.
-  //
-  // Safe to re-run: uses the deterministic {uid}_{date} doc ids, so days
-  // are upserted (no duplicates). Delete this method and its Profile-tab
-  // button once you've generated the demo data.
-  // ============================================================
-  Future<void> seedDemoData({int days = 21}) async {
-    if (currentUser == null) return;
-    final uid = currentUser!.id;
-    final rng = Random(42); // fixed seed -> reproducible dataset
-    final now = DateTime.now();
-    final startOfToday = DateTime(now.year, now.month, now.day);
-
-    const goodEmotions = ['Happy', 'Calm', 'Energetic', 'Motivated'];
-    const badEmotions = ['Anxious', 'Tired', 'Stressed', 'Irritable'];
-    const activities = [
-      'Work', 'Exercise', 'Socializing', 'Study', 'Rest', 'Poor diet'
-    ];
-
-    double prevSleepQuality = 6; // yesterday's sleep drives today's mood
-    double todaysMood = 0;
-
-    for (int i = days - 1; i >= 0; i--) {
-      final date = startOfToday.subtract(Duration(days: i));
-      final isWeekend = date.weekday == DateTime.saturday ||
-          date.weekday == DateTime.sunday;
-
-      final sleepHours =
-          (5.0 + rng.nextDouble() * 3.0 + (isWeekend ? 0.5 : 0.0))
-              .clamp(4.0, 9.5);
-      final sleepQuality = (sleepHours - 2).round().clamp(1, 10);
-
-      // Mood correlates with LAST night's sleep quality + a weekend lift.
-      final mood = (prevSleepQuality * 0.7 +
-              (isWeekend ? 1.5 : 0.0) +
-              rng.nextDouble() * 1.5)
-          .clamp(2.5, 9.5);
-
-      final hadNightmare = sleepQuality <= 4 && rng.nextBool();
-      final pool = mood >= 6.0 ? goodEmotions : badEmotions;
-      final emotions = <String>{
-        pool[rng.nextInt(pool.length)],
-        if (rng.nextBool()) pool[rng.nextInt(pool.length)],
-      }.toList();
-      final trigger = activities[rng.nextInt(activities.length)];
-
-      final total = 3 + rng.nextInt(4); // 3-6 tasks
-      final completed = (total * (mood / 10)).round().clamp(0, total);
-      final rate = completed / total;
-      final dateStr =
-          '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
-
-      await _dbService.upsertModeLog(uid, date, {
-        'moodScore': double.parse(mood.toStringAsFixed(1)),
-        'sleepHours': double.parse(sleepHours.toStringAsFixed(1)),
-        'sleepQuality': sleepQuality,
-        'hadNightmare': hadNightmare,
-        'emotions': emotions,
-        'trigger': trigger,
-        'notes': '',
-        'isSharedWithFriends': false,
-      });
-
-      await _dbService.saveProductivityRecord(ProductivityRecord(
-        userId: uid,
-        date: dateStr,
-        completionRate: rate,
-        completedTasks: completed,
-        totalTasks: total,
-      ));
-
-      prevSleepQuality = sleepQuality.toDouble();
-      if (i == 0) todaysMood = mood;
-    }
-
-    // Make the profile look active and mirror today's mood to it.
-    await _dbService.updateStreak(uid, days);
-    if (todaysMood > 0) {
-      await _dbService.updateUserMood(
-          uid, double.parse(todaysMood.toStringAsFixed(1)),
-          User.todayDateString());
-    }
-
-    notifyListeners();
-  }
-
   Future<void> toggleLogSharing(LogEntry log) async {
     if (currentUser == null) return;
     await _dbService.upsertModeLog(
@@ -664,6 +801,21 @@ class AppProvider with ChangeNotifier {
     if (currentUser != null) {
       await _dbService.updateWaterGoal(currentUser!.id, goal);
     }
+  }
+
+  // Set the recurring hydration-reminder interval (in minutes; 0 = off).
+  // Persists the choice on the profile, requests OS permission when enabling,
+  // and (re)arms the local notification via NotificationService.
+  Future<void> setHydrationReminder(int minutes) async {
+    if (currentUser == null) return;
+    currentUser!.hydrationReminderMinutes = minutes;
+    notifyListeners();
+    await _dbService
+        .updateLeaderboardData(currentUser!.id, {'hydrationReminderMinutes': minutes});
+    if (minutes > 0) {
+      await NotificationService.requestPermission();
+    }
+    await NotificationService.scheduleHydrationReminder(minutes);
   }
 
   // ==========================================

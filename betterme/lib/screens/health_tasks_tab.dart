@@ -86,6 +86,9 @@ class HealthTasksTab extends StatefulWidget {
 class _HealthTasksTabState extends State<HealthTasksTab> {
   final TextEditingController _waterController = TextEditingController();
 
+  // Selectable hydration-reminder intervals, in minutes (0 = off).
+  static const List<int> _kHydrationIntervals = [0, 30, 60, 120, 180, 240];
+
   // Task IDs that have been toggled to complete but are still animating out
   // of the active list. Removed from this set after the animation completes,
   // at which point they naturally appear in the Completed section.
@@ -728,7 +731,136 @@ class _HealthTasksTabState extends State<HealthTasksTab> {
               ),
             ],
           ),
+          const SizedBox(height: 12),
+          _buildHydrationReminderRow(context, provider),
         ],
+      ),
+    );
+  }
+
+  // A tappable row that shows the current hydration-reminder interval and opens
+  // the interval picker.
+  Widget _buildHydrationReminderRow(BuildContext context, AppProvider provider) {
+    final minutes = provider.currentUser?.hydrationReminderMinutes ?? 0;
+    final isOn = minutes > 0;
+    const accent = Color(0xFF0288D1);
+    return InkWell(
+      borderRadius: BorderRadius.circular(8),
+      onTap: () => _showHydrationReminderDialog(context, provider, minutes),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+        decoration: BoxDecoration(
+          color: AppTheme.surfaceContainerLow,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: AppTheme.borderDefault),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              isOn ? Icons.notifications_active : Icons.notifications_none,
+              size: 20,
+              color: isOn ? accent : AppTheme.onSurfaceVariant,
+            ),
+            const SizedBox(width: 10),
+            const Expanded(
+              child: Text(
+                'Reminder',
+                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+              ),
+            ),
+            Text(
+              _hydrationReminderLabel(minutes),
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: isOn ? accent : AppTheme.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(width: 2),
+            const Icon(Icons.chevron_right, size: 20, color: AppTheme.outline),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _hydrationReminderLabel(int minutes) {
+    switch (minutes) {
+      case 0:
+        return 'Off';
+      case 30:
+        return 'Every 30 min';
+      case 60:
+        return 'Every hour';
+      default:
+        return 'Every ${minutes ~/ 60} hours';
+    }
+  }
+
+  void _showHydrationReminderDialog(
+    BuildContext context,
+    AppProvider provider,
+    int currentMinutes,
+  ) {
+    showDialog(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Hydration Reminder'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Padding(
+                padding: EdgeInsets.only(bottom: 8),
+                child: Text(
+                  'Remind me to drink water:',
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: AppTheme.onSurfaceVariant,
+                  ),
+                ),
+              ),
+              ..._kHydrationIntervals.map((m) {
+                final selected = m == currentMinutes;
+                return ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: Icon(
+                    selected
+                        ? Icons.radio_button_checked
+                        : Icons.radio_button_unchecked,
+                    color: selected ? AppTheme.primary : AppTheme.outline,
+                  ),
+                  title: Text(_hydrationReminderLabel(m)),
+                  onTap: () {
+                    Navigator.pop(dialogContext);
+                    provider.setHydrationReminder(m);
+                    _showReminderConfirmation(context, m);
+                  },
+                );
+              }),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Close'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  void _showReminderConfirmation(BuildContext context, int minutes) {
+    ScaffoldMessenger.of(context).clearSnackBars();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          minutes > 0
+              ? 'Hydration reminder set — ${_hydrationReminderLabel(minutes).toLowerCase()}'
+              : 'Hydration reminder turned off',
+        ),
+        duration: const Duration(seconds: 2),
       ),
     );
   }

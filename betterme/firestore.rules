@@ -15,6 +15,13 @@ service cloud.firestore {
       );
     }
 
+    // ── Private Profile (PII) ─────────────────────────────────────────────────
+    // Owner-only personal details (birth date, phone). Unlike `users`, this doc
+    // is never readable by other users — this is what keeps PII private.
+    match /privateProfile/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+
     // ── Friend Requests ───────────────────────────────────────────────────────
     match /friendRequests/{requestId} {
       allow read: if request.auth != null && (

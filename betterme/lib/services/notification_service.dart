@@ -145,7 +145,54 @@ class NotificationService {
     }
   }
 
+  // Schedule (or reschedule) a repeating hydration reminder that fires every
+  // [intervalMinutes] minutes. Passing 0 or a negative value simply cancels
+  // any existing reminder. Uses periodicallyShowWithDuration so any interval
+  // (30 min, 1h, 2h, …) is supported, not just the fixed RepeatInterval values.
+  static Future<void> scheduleHydrationReminder(int intervalMinutes) async {
+    if (!_initialized) return;
+    // Always clear the previous schedule first so changing the interval doesn't
+    // leave a stale reminder running alongside the new one.
+    await cancelHydrationReminder();
+    if (intervalMinutes <= 0) return;
+
+    try {
+      await _plugin.periodicallyShowWithDuration(
+        _hydrationNotifId,
+        'Time to hydrate 💧',
+        'Take a moment to drink some water and log it in BetterME.',
+        Duration(minutes: intervalMinutes),
+        const NotificationDetails(
+          android: AndroidNotificationDetails(
+            'hydration_reminders',
+            'Hydration Reminders',
+            channelDescription: 'Recurring reminders to drink water',
+            importance: Importance.high,
+            priority: Priority.high,
+          ),
+          iOS: DarwinNotificationDetails(),
+        ),
+        androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
+      );
+    } catch (e) {
+      debugPrint('[Notifications] scheduleHydrationReminder error: $e');
+    }
+  }
+
+  // Cancel the recurring hydration reminder, if one is scheduled.
+  static Future<void> cancelHydrationReminder() async {
+    if (!_initialized) return;
+    try {
+      await _plugin.cancel(_hydrationNotifId);
+    } catch (e) {
+      debugPrint('[Notifications] cancelHydrationReminder error: $e');
+    }
+  }
+
   static int _taskNotifId(String taskId) =>
       taskId.hashCode.abs() % 2000000000;
   static int _streakNotifId(int streak) => 90000 + streak;
+  // Fixed id for the single recurring hydration reminder (there is only ever
+  // one at a time). Kept clear of the task/streak id ranges above.
+  static const int _hydrationNotifId = 80000;
 }

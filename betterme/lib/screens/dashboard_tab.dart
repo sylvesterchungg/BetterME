@@ -21,6 +21,7 @@ class DashboardTab extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 _buildHeader(context, provider),
+                const _MorningNudgeCard(),
                 const SizedBox(height: 24),
                 _buildSummaryGrid(context, provider),
                 const SizedBox(height: 20),
@@ -47,59 +48,35 @@ class DashboardTab extends StatelessWidget {
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
         GestureDetector(
-          onTap: () => Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (ctx) => Scaffold(
-                  backgroundColor: AppTheme.surfaceContainerLow,
-                  appBar: AppBar(
-                    leading: IconButton(
-                      icon: const Icon(Icons.arrow_back,
-                          color: AppTheme.onSurface),
-                      onPressed: () => Navigator.pop(ctx),
-                    ),
-                    title: const Text('Profile',
-                        style: TextStyle(fontWeight: FontWeight.w600)),
-                    backgroundColor: Colors.white,
-                    surfaceTintColor: Colors.white,
-                    elevation: 0,
-                    bottom: PreferredSize(
-                      preferredSize: const Size.fromHeight(1),
-                      child: Container(
-                          height: 1, color: AppTheme.borderDefault),
-                    ),
-                  ),
-                  body: const ProfileTab(),
-                ),
-              )),
+          onTap: () => ProfileScreen.open(context),
           child: Row(
             children: [
               Container(
-                width: 40,
-                height: 40,
+                width: 52,
+                height: 52,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   border: Border.all(color: AppTheme.outlineVariant, width: 2),
                 ),
                 child: ClipRRect(
-                  borderRadius: BorderRadius.circular(20),
+                  borderRadius: BorderRadius.circular(26),
                   child: user?.avatarUrl != null && user!.avatarUrl.isNotEmpty
                       ? Image.network(user.avatarUrl, fit: BoxFit.cover,
                           errorBuilder: (_, _, _) =>
-                              const Icon(Icons.person, color: AppTheme.outline))
-                      : const Icon(Icons.person, color: AppTheme.outline),
+                              const Icon(Icons.person, color: AppTheme.outline, size: 28))
+                      : const Icon(Icons.person, color: AppTheme.outline, size: 28),
                 ),
               ),
-              const SizedBox(width: 10),
+              const SizedBox(width: 12),
               Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text('Hello, ${user?.username ?? ''}',
                       style: const TextStyle(
-                          fontSize: 13, color: AppTheme.onSurfaceVariant)),
+                          fontSize: 16, color: AppTheme.onSurfaceVariant)),
                   Text(dateStr,
                       style: const TextStyle(
-                          fontSize: 14,
+                          fontSize: 18,
                           fontWeight: FontWeight.w600,
                           color: AppTheme.primary)),
                 ],
@@ -113,23 +90,23 @@ class DashboardTab extends StatelessWidget {
           child: Stack(
             children: [
               Container(
-                width: 38,
-                height: 38,
+                width: 46,
+                height: 46,
                 decoration: BoxDecoration(
                   color: AppTheme.surfaceContainerLow,
                   shape: BoxShape.circle,
                   border: Border.all(color: AppTheme.borderDefault),
                 ),
                 child: const Icon(Icons.notifications_outlined,
-                    color: AppTheme.onSurfaceVariant, size: 20),
+                    color: AppTheme.onSurfaceVariant, size: 24),
               ),
               if (provider.unreadNotificationCount > 0)
                 Positioned(
                   right: 0,
                   top: 0,
                   child: Container(
-                    width: 15,
-                    height: 15,
+                    width: 18,
+                    height: 18,
                     decoration: const BoxDecoration(
                         color: AppTheme.error, shape: BoxShape.circle),
                     alignment: Alignment.center,
@@ -138,7 +115,7 @@ class DashboardTab extends StatelessWidget {
                           ? '9+'
                           : '${provider.unreadNotificationCount}',
                       style: const TextStyle(
-                          fontSize: 8,
+                          fontSize: 10,
                           fontWeight: FontWeight.w700,
                           color: Colors.white),
                     ),
@@ -180,8 +157,8 @@ class DashboardTab extends StatelessWidget {
       children: [
         const Text("Today's Overview",
             style:
-                TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
-        const SizedBox(height: 12),
+                TextStyle(fontSize: 19, fontWeight: FontWeight.w600)),
+        const SizedBox(height: 14),
         Row(
           children: [
             Expanded(
@@ -195,7 +172,7 @@ class DashboardTab extends StatelessWidget {
                 sub: todayMood != null ? '/ 10' : 'not logged',
               ),
             ),
-            const SizedBox(width: 10),
+            const SizedBox(width: 12),
             Expanded(
               child: _statTile(
                 icon: Icons.bedtime,
@@ -209,7 +186,7 @@ class DashboardTab extends StatelessWidget {
             ),
           ],
         ),
-        const SizedBox(height: 10),
+        const SizedBox(height: 12),
         Row(
           children: [
             Expanded(
@@ -222,7 +199,7 @@ class DashboardTab extends StatelessWidget {
                 progress: (water / waterGoal).clamp(0.0, 1.0),
               ),
             ),
-            const SizedBox(width: 10),
+            const SizedBox(width: 12),
             Expanded(
               child: _statTile(
                 icon: Icons.local_fire_department,
@@ -247,10 +224,10 @@ class DashboardTab extends StatelessWidget {
     double? progress,
   }) {
     return Container(
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: BorderRadius.circular(12),
         border: Border.all(color: AppTheme.borderDefault),
       ),
       child: Column(
@@ -258,27 +235,27 @@ class DashboardTab extends StatelessWidget {
         children: [
           Row(
             children: [
-              Icon(icon, color: color, size: 16),
-              const SizedBox(width: 5),
+              Icon(icon, color: color, size: 20),
+              const SizedBox(width: 7),
               Text(label,
                   style: const TextStyle(
-                      fontSize: 11, color: AppTheme.onSurfaceVariant)),
+                      fontSize: 14, color: AppTheme.onSurfaceVariant)),
             ],
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 10),
           Text(value,
               style: const TextStyle(
-                  fontSize: 20, fontWeight: FontWeight.w700)),
+                  fontSize: 28, fontWeight: FontWeight.w700)),
           Text(sub,
               style: const TextStyle(
-                  fontSize: 11, color: AppTheme.onSurfaceVariant)),
+                  fontSize: 14, color: AppTheme.onSurfaceVariant)),
           if (progress != null) ...[
-            const SizedBox(height: 8),
+            const SizedBox(height: 10),
             ClipRRect(
               borderRadius: BorderRadius.circular(4),
               child: LinearProgressIndicator(
                 value: progress,
-                minHeight: 4,
+                minHeight: 6,
                 backgroundColor: AppTheme.surfaceContainer,
                 color: const Color(0xFF0288D1),
               ),
@@ -292,94 +269,124 @@ class DashboardTab extends StatelessWidget {
   // ── Week Strip ────────────────────────────────────────────────────────────
 
   Widget _buildWeekStrip(AppProvider provider) {
-    final today = DateTime.now();
-    final monday =
-        today.subtract(Duration(days: today.weekday - 1));
-    const labels = ['M', 'T', 'W', 'T', 'F', 'S'];
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    // Monday of the current week (weekday: Mon=1 … Sun=7).
+    final monday = today.subtract(Duration(days: today.weekday - 1));
+    const labels = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
 
-    final logsThisWeek = provider.logs.where((l) =>
-        !l.date.isBefore(monday.subtract(const Duration(hours: 1))) &&
-        l.date.isBefore(monday.add(const Duration(days: 7)))).toList();
+    bool sameDay(DateTime a, DateTime b) =>
+        a.year == b.year && a.month == b.month && a.day == b.day;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const Text('This Week',
-            style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
-        const SizedBox(height: 10),
+            style: TextStyle(fontSize: 19, fontWeight: FontWeight.w600)),
+        const SizedBox(height: 12),
         Container(
           padding:
-              const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              const EdgeInsets.symmetric(horizontal: 14, vertical: 16),
           decoration: BoxDecoration(
             color: Colors.white,
             borderRadius: BorderRadius.circular(10),
             border: Border.all(color: AppTheme.borderDefault),
           ),
           child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: List.generate(6, (i) {
+            children: List.generate(7, (i) {
               final date = monday.add(Duration(days: i));
-              final isToday = date.day == today.day &&
-                  date.month == today.month &&
-                  date.year == today.year;
-              final isFuture =
-                  date.isAfter(today) && !isToday;
-              final hasLog = logsThisWeek.any((l) =>
-                  l.date.day == date.day &&
-                  l.date.month == date.month &&
-                  l.date.year == date.year);
+              final isToday = sameDay(date, today);
+              final isFuture = date.isAfter(today);
 
-              Color dotColor;
-              if (hasLog) {
-                dotColor = AppTheme.primary;
+              // The day's log, preferring one that actually carries a mood.
+              // (Compare by calendar day so time-of-day never hides a log.)
+              LogEntry? dayLog;
+              for (final l in provider.logs) {
+                if (!sameDay(l.date, date)) continue;
+                dayLog = l;
+                if (l.moodScore > 0) break;
+              }
+              final hasLog = dayLog != null;
+              final mood = (dayLog != null && dayLog.moodScore > 0)
+                  ? dayLog.moodScore
+                  : null;
+
+              // Circle fill + inner icon: the mood face when a mood was logged,
+              // a check for a mood-less log, an add prompt on today, else empty.
+              final Color circleColor;
+              final Widget? inner;
+              if (mood != null) {
+                final c = _moodColor(mood);
+                circleColor = c.withValues(alpha: 0.18);
+                inner = Icon(_moodIcon(mood), size: 20, color: c);
+              } else if (hasLog) {
+                circleColor = AppTheme.primaryFixed;
+                inner = Icon(Icons.check, size: 18, color: AppTheme.primary);
               } else if (isToday) {
-                dotColor = AppTheme.outlineVariant;
-              } else if (isFuture) {
-                dotColor = AppTheme.surfaceContainer;
+                circleColor = AppTheme.outlineVariant.withValues(alpha: 0.15);
+                inner =
+                    const Icon(Icons.add, size: 18, color: AppTheme.outline);
               } else {
-                dotColor = AppTheme.surfaceContainerHigh;
+                circleColor = (isFuture
+                        ? AppTheme.surfaceContainer
+                        : AppTheme.surfaceContainerHigh)
+                    .withValues(alpha: 0.15);
+                inner = null;
               }
 
-              return Column(
-                children: [
-                  Text(labels[i],
-                      style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: isToday
-                              ? FontWeight.w700
-                              : FontWeight.normal,
-                          color: isToday
-                              ? AppTheme.onSurface
-                              : AppTheme.onSurfaceVariant)),
-                  const SizedBox(height: 6),
-                  Container(
-                    width: 28,
-                    height: 28,
-                    decoration: BoxDecoration(
-                      color: hasLog
-                          ? AppTheme.primaryFixed
-                          : dotColor.withValues(alpha: 0.15),
-                      shape: BoxShape.circle,
-                      border: isToday && !hasLog
-                          ? Border.all(
-                              color: AppTheme.outlineVariant, width: 1.5)
-                          : null,
-                    ),
-                    child: hasLog
-                        ? Icon(Icons.check,
-                            size: 14, color: AppTheme.primary)
-                        : isToday
-                            ? const Icon(Icons.add,
-                                size: 14, color: AppTheme.outline)
+              return Expanded(
+                child: Column(
+                  children: [
+                    Text(labels[i],
+                        style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: isToday
+                                ? FontWeight.w700
+                                : FontWeight.normal,
+                            color: isToday
+                                ? AppTheme.onSurface
+                                : AppTheme.onSurfaceVariant)),
+                    const SizedBox(height: 8),
+                    Container(
+                      width: 34,
+                      height: 34,
+                      decoration: BoxDecoration(
+                        color: circleColor,
+                        shape: BoxShape.circle,
+                        border: isToday && !hasLog
+                            ? Border.all(
+                                color: AppTheme.outlineVariant, width: 1.5)
                             : null,
-                  ),
-                ],
+                      ),
+                      child: inner,
+                    ),
+                  ],
+                ),
               );
             }),
           ),
         ),
       ],
     );
+  }
+
+  // Maps a 1–10 mood score to the same five faces used in the daily-log tab.
+  IconData _moodIcon(double score) {
+    if (score <= 2.0) return Icons.sentiment_very_dissatisfied;
+    if (score <= 4.0) return Icons.sentiment_dissatisfied;
+    if (score <= 6.0) return Icons.sentiment_neutral;
+    if (score <= 8.5) return Icons.sentiment_satisfied;
+    return Icons.sentiment_very_satisfied;
+  }
+
+  // Colour scale for those faces: red → green, with the neutral tone matching
+  // the amber used for mood elsewhere (trends chart).
+  Color _moodColor(double score) {
+    if (score <= 2.0) return const Color(0xFFE53935); // awful — red
+    if (score <= 4.0) return const Color(0xFFFB8C00); // bad — orange
+    if (score <= 6.0) return const Color(0xFFF59E0B); // meh — amber
+    if (score <= 8.5) return const Color(0xFF7CB342); // good — light green
+    return const Color(0xFF43A047); // great — green
   }
 
   // ── Quick Add ─────────────────────────────────────────────────────────────
@@ -389,8 +396,8 @@ class DashboardTab extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const Text('Quick Add',
-            style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
-        const SizedBox(height: 10),
+            style: TextStyle(fontSize: 19, fontWeight: FontWeight.w600)),
+        const SizedBox(height: 12),
         Row(
           children: [
             Expanded(
@@ -438,24 +445,24 @@ class DashboardTab extends StatelessWidget {
       onTap: () => _showAddTaskDialog(
           context, provider, label, example, category, categoryIconKey),
       child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 12),
+        padding: const EdgeInsets.symmetric(vertical: 16),
         decoration: BoxDecoration(
           color: Colors.white,
-          borderRadius: BorderRadius.circular(10),
+          borderRadius: BorderRadius.circular(12),
           border: Border.all(color: AppTheme.borderDefault),
         ),
         child: Column(
           children: [
             Container(
-              width: 36,
-              height: 36,
+              width: 46,
+              height: 46,
               decoration: BoxDecoration(color: bg, shape: BoxShape.circle),
-              child: Icon(icon, color: fg, size: 18),
+              child: Icon(icon, color: fg, size: 24),
             ),
-            const SizedBox(height: 6),
+            const SizedBox(height: 8),
             Text(label,
                 style: const TextStyle(
-                    fontSize: 11, fontWeight: FontWeight.w500)),
+                    fontSize: 14, fontWeight: FontWeight.w500)),
           ],
         ),
       ),
@@ -588,29 +595,29 @@ class DashboardTab extends StatelessWidget {
     if (reminder == null) return const SizedBox.shrink();
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
       decoration: BoxDecoration(
         color: AppTheme.primaryContainer,
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: BorderRadius.circular(12),
       ),
       child: Row(
         children: [
-          const Icon(Icons.notifications_active, color: Colors.white, size: 20),
-          const SizedBox(width: 12),
+          const Icon(Icons.notifications_active, color: Colors.white, size: 26),
+          const SizedBox(width: 14),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text('Up next: ${reminder.task.title}',
                     style: const TextStyle(
-                        fontSize: 13,
+                        fontSize: 16,
                         fontWeight: FontWeight.w600,
                         color: Colors.white),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis),
                 Text(_formatReminderTime(reminder.when),
                     style: const TextStyle(
-                        fontSize: 12, color: Colors.white70)),
+                        fontSize: 14, color: Colors.white70)),
               ],
             ),
           ),
@@ -668,4 +675,82 @@ class _UpcomingReminder {
   final Task task;
   final DateTime when;
   _UpcomingReminder(this.task, this.when);
+}
+
+/// A warm, one-line personalized morning nudge banner. Triggers generation via
+/// the provider (guarded internally, so calling it every rebuild is cheap) and
+/// hides itself entirely until there's something to show.
+class _MorningNudgeCard extends StatelessWidget {
+  const _MorningNudgeCard();
+
+  @override
+  Widget build(BuildContext context) {
+    final provider = context.watch<AppProvider>();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      provider.ensureMorningNudge();
+    });
+
+    final nudge = provider.morningNudge;
+    final loading = provider.morningNudgeLoading;
+    if (!loading && (nudge == null || nudge.text.isEmpty)) {
+      return const SizedBox.shrink();
+    }
+
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(top: 16),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [Color(0xFFF3F1FB), Color(0xFFF6F1FA)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFF8B7CC8).withValues(alpha: 0.18)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('☀️', style: TextStyle(fontSize: 24)),
+          const SizedBox(width: 14),
+          Expanded(
+            child: loading
+                ? Row(
+                    children: const [
+                      SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, color: Color(0xFF8B7CC8)),
+                      ),
+                      SizedBox(width: 12),
+                      Text('Thinking about your morning…',
+                          style: TextStyle(
+                              fontSize: 15, color: Color(0xFF4B4463))),
+                    ],
+                  )
+                : Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('GOOD MORNING',
+                          style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: 0.6,
+                              color: Color(0xFF6D5DB0))),
+                      const SizedBox(height: 5),
+                      Text(nudge!.text,
+                          style: const TextStyle(
+                              fontSize: 16,
+                              height: 1.4,
+                              color: Color(0xFF3B3560),
+                              fontWeight: FontWeight.w500)),
+                    ],
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
 }

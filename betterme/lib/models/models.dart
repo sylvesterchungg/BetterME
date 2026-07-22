@@ -4,6 +4,9 @@ import 'package:flutter/material.dart';
 class User {
   String id;
   String username;
+  // The user's real/display name (e.g. "Jane Doe"), shown on their profile.
+  // Distinct from [username], which is the unique handle used for friend search.
+  String name;
   String avatarUrl;
   int streak;
   int waterIntake;
@@ -20,10 +23,14 @@ class User {
   bool notificationsEnabled; // master switch for task-reminder local notifications
   bool friendActivityNotif;  // in-app friend-accepted notifications
   bool streakAlertsNotif;    // in-app and OS streak milestone notifications
+  // Recurring hydration reminder interval in minutes (0 = off). Drives a
+  // repeating OS notification scheduled by NotificationService.
+  int hydrationReminderMinutes;
 
   User({
     required this.id,
     required this.username,
+    this.name = '',
     required this.avatarUrl,
     required this.streak,
     this.waterIntake = 0,
@@ -36,6 +43,7 @@ class User {
     this.notificationsEnabled = true,
     this.friendActivityNotif = true,
     this.streakAlertsNotif = true,
+    this.hydrationReminderMinutes = 0,
   });
 
   static String todayDateString() {
@@ -48,6 +56,7 @@ class User {
     return {
       'id': id,
       'username': username,
+      'name': name,
       'avatarUrl': avatarUrl,
       'streak': streak,
       'waterIntake': waterIntake,
@@ -60,6 +69,7 @@ class User {
       'notificationsEnabled': notificationsEnabled,
       'friendActivityNotif': friendActivityNotif,
       'streakAlertsNotif': streakAlertsNotif,
+      'hydrationReminderMinutes': hydrationReminderMinutes,
     };
   }
 
@@ -79,6 +89,7 @@ class User {
     return User(
       id: documentId,
       username: map['username'] ?? '',
+      name: map['name'] as String? ?? '',
       avatarUrl: map['avatarUrl'] ?? '',
       streak: map['streak'] ?? 0,
       waterIntake: intake,
@@ -91,8 +102,32 @@ class User {
       notificationsEnabled: map['notificationsEnabled'] as bool? ?? true,
       friendActivityNotif: map['friendActivityNotif'] as bool? ?? true,
       streakAlertsNotif: map['streakAlertsNotif'] as bool? ?? true,
+      hydrationReminderMinutes: map['hydrationReminderMinutes'] as int? ?? 0,
     );
   }
+}
+
+/// Owner-only personal details (PII). Stored in `privateProfile/{userId}`, which
+/// is readable/writable ONLY by the owner (see firestore.rules) — unlike the
+/// `users` doc, which is world-readable for the leaderboard/friend search. Keep
+/// anything personal (birth date, phone) here, never on [User].
+class PrivateProfile {
+  final DateTime? birthDate;
+  final String phoneNumber;
+
+  const PrivateProfile({this.birthDate, this.phoneNumber = ''});
+
+  Map<String, dynamic> toMap() => {
+        'birthDate': birthDate?.toIso8601String(),
+        'phoneNumber': phoneNumber,
+      };
+
+  factory PrivateProfile.fromMap(Map<String, dynamic> map) => PrivateProfile(
+        birthDate: map['birthDate'] != null
+            ? DateTime.tryParse(map['birthDate'] as String)
+            : null,
+        phoneNumber: map['phoneNumber'] as String? ?? '',
+      );
 }
 
 class Task {
@@ -349,6 +384,131 @@ class AIInsight {
         breakdown: breakdown,
         nudge: nudge,
         dataSignature: dataSignature ?? this.dataSignature,
+        generatedAt: generatedAt ?? this.generatedAt,
+      );
+}
+
+/// A single calming coping action suggested by the AI.
+class AICopingTip {
+  final String title; // short action, e.g. "Wind-down routine"
+  final String detail; // one supportive sentence explaining how
+
+  const AICopingTip({required this.title, required this.detail});
+
+  factory AICopingTip.fromMap(Map<String, dynamic> map) => AICopingTip(
+        title: (map['title'] ?? '').toString().trim(),
+        detail: (map['detail'] ?? '').toString().trim(),
+      );
+
+  Map<String, dynamic> toMap() => {'title': title, 'detail': detail};
+}
+
+/// AI-generated coping support shown when rough days (nightmares, symptoms,
+/// low mood) cluster in the recent logs. Gentle, non-clinical self-care ideas.
+class AICopingTips {
+  /// One warm sentence acknowledging the rough patch.
+  final String intro;
+
+  /// 2-3 tailored coping actions.
+  final List<AICopingTip> tips;
+
+  /// Fingerprint of the rough-day content this was generated for.
+  final String signature;
+
+  /// When it was produced (for the freshness check).
+  final DateTime generatedAt;
+
+  AICopingTips({
+    required this.intro,
+    required this.tips,
+    this.signature = '',
+    DateTime? generatedAt,
+  }) : generatedAt = generatedAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+
+  bool get isEmpty => tips.isEmpty;
+
+  /// Parses the raw JSON returned by Gemini (snake_case keys).
+  factory AICopingTips.fromJson(Map<String, dynamic> json) {
+    final rawTips = (json['tips'] as List?) ?? const [];
+    return AICopingTips(
+      intro: (json['intro'] ?? '').toString().trim(),
+      tips: rawTips
+          .whereType<Map>()
+          .map((m) => AICopingTip.fromMap(Map<String, dynamic>.from(m)))
+          .where((t) => t.title.isNotEmpty || t.detail.isNotEmpty)
+          .toList(),
+    );
+  }
+
+  /// Reads back cached coping tips from Firestore.
+  factory AICopingTips.fromMap(Map<String, dynamic> map) {
+    final rawTips = (map['tips'] as List?) ?? const [];
+    return AICopingTips(
+      intro: (map['intro'] ?? '').toString(),
+      tips: rawTips
+          .whereType<Map>()
+          .map((m) => AICopingTip.fromMap(Map<String, dynamic>.from(m)))
+          .toList(),
+      signature: (map['signature'] ?? '').toString(),
+      generatedAt: DateTime.tryParse((map['generatedAt'] ?? '').toString()),
+    );
+  }
+
+  Map<String, dynamic> toMap() => {
+        'intro': intro,
+        'tips': tips.map((t) => t.toMap()).toList(),
+        'signature': signature,
+        'generatedAt': generatedAt.toIso8601String(),
+      };
+
+  AICopingTips copyWith({String? signature, DateTime? generatedAt}) =>
+      AICopingTips(
+        intro: intro,
+        tips: tips,
+        signature: signature ?? this.signature,
+        generatedAt: generatedAt ?? this.generatedAt,
+      );
+}
+
+/// One-line personalized "good morning" tip for the dashboard, built from last
+/// night's sleep/mood + today's task load. Cached like [AIInsight]/[AICopingTips]
+/// so it loads instantly and only calls Gemini when its inputs change.
+class MorningNudge {
+  /// The single friendly sentence shown to the user.
+  final String text;
+
+  /// Fingerprint of the inputs it was built from (see nudgeSignatureFor).
+  final String signature;
+
+  /// When it was produced (for the freshness check).
+  final DateTime generatedAt;
+
+  MorningNudge({required this.text, this.signature = '', DateTime? generatedAt})
+      : generatedAt = generatedAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+
+  bool get isEmpty => text.isEmpty;
+
+  /// Parses the raw JSON returned by Gemini.
+  factory MorningNudge.fromJson(Map<String, dynamic> json) =>
+      MorningNudge(text: (json['nudge'] ?? '').toString().trim());
+
+  /// Reads back a cached nudge from Firestore.
+  factory MorningNudge.fromMap(Map<String, dynamic> map) => MorningNudge(
+        text: (map['text'] ?? '').toString(),
+        signature: (map['signature'] ?? '').toString(),
+        generatedAt: DateTime.tryParse((map['generatedAt'] ?? '').toString()),
+      );
+
+  Map<String, dynamic> toMap() => {
+        'text': text,
+        'signature': signature,
+        'generatedAt': generatedAt.toIso8601String(),
+      };
+
+  MorningNudge copyWith({String? signature, DateTime? generatedAt}) =>
+      MorningNudge(
+        text: text,
+        signature: signature ?? this.signature,
         generatedAt: generatedAt ?? this.generatedAt,
       );
 }

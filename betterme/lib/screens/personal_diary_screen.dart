@@ -776,34 +776,37 @@ class _PersonalDiaryScreenState extends State<PersonalDiaryScreen> {
     );
   }
 
-  Widget _summaryChip(IconData icon, String label, Color bg, Color fg) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-      decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(20)),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 13, color: fg),
-          const SizedBox(width: 4),
-          Text(label, style: TextStyle(fontSize: 12, color: fg, fontWeight: FontWeight.w500)),
-        ],
-      ),
-    );
-  }
+}
 
-  IconData _moodIcon(double score) {
-    if (score <= 0) return Icons.sentiment_neutral;
-    if (score >= 7) return Icons.sentiment_very_satisfied; // High
-    if (score >= 4) return Icons.sentiment_satisfied; // Moderate
-    return Icons.sentiment_dissatisfied; // Low
-  }
+// Shared read-only chip/mood helpers, used by both the entry cards and the
+// editor's read-only preview (top-level so both State classes can call them).
+Widget _summaryChip(IconData icon, String label, Color bg, Color fg) {
+  return Container(
+    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+    decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(20)),
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 13, color: fg),
+        const SizedBox(width: 4),
+        Text(label, style: TextStyle(fontSize: 12, color: fg, fontWeight: FontWeight.w500)),
+      ],
+    ),
+  );
+}
 
-  Color _moodColor(double score) {
-    if (score <= 0) return AppTheme.outlineVariant;
-    if (score >= 7) return const Color(0xFF2E7D32); // High
-    if (score >= 4) return const Color(0xFFF57F17); // Moderate
-    return AppTheme.error; // Low
-  }
+IconData _moodIcon(double score) {
+  if (score <= 0) return Icons.sentiment_neutral;
+  if (score >= 7) return Icons.sentiment_very_satisfied; // High
+  if (score >= 4) return Icons.sentiment_satisfied; // Moderate
+  return Icons.sentiment_dissatisfied; // Low
+}
+
+Color _moodColor(double score) {
+  if (score <= 0) return AppTheme.outlineVariant;
+  if (score >= 7) return const Color(0xFF2E7D32); // High
+  if (score >= 4) return const Color(0xFFF57F17); // Moderate
+  return AppTheme.error; // Low
 }
 
 // Full-field journal editor. Kept as its own StatefulWidget (rather than a
@@ -895,71 +898,59 @@ class _EditJournalSheetState extends State<_EditJournalSheet> {
     return null;
   }
 
-  // Read-only snapshot of the day's mood/sleep/quality. These are logged and
-  // edited in the Daily Log tab; the journal only displays them.
+  // Read-only preview of the day's logged mood/sleep/quality/emotions — same
+  // chips as the entry cards. These are edited in the Daily Log tab, not here.
+  // Renders nothing when the day has nothing logged yet.
   Widget _buildLoggedInfo() {
     final log = _dayLog;
     final mood = log?.moodScore ?? 0;
     final sleep = log?.sleepHours ?? 0;
     final quality = log?.sleepQuality ?? 0;
-    final hasAny = mood > 0 || sleep > 0 || quality > 0;
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: AppTheme.surfaceContainerLow,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppTheme.borderDefault),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              const Icon(Icons.insights_outlined, size: 15, color: AppTheme.outline),
-              const SizedBox(width: 6),
-              const Text('From your Daily Log',
-                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppTheme.onSurfaceVariant)),
-            ],
-          ),
-          const SizedBox(height: 8),
-          if (!hasAny)
-            const Text('No mood or sleep logged for this day yet.',
-                style: TextStyle(fontSize: 12, color: AppTheme.outline))
-          else
-            Wrap(
-              spacing: 8,
-              runSpacing: 6,
-              children: [
-                if (mood > 0) _readOnlyChip(Icons.mood, 'Mood ${mood.toStringAsFixed(1)}/10'),
-                if (sleep > 0) _readOnlyChip(Icons.bedtime_outlined, 'Sleep ${sleep.toStringAsFixed(1)}h'),
-                if (quality > 0) _readOnlyChip(Icons.star_outline, 'Quality $quality/10'),
-              ],
-            ),
-          const SizedBox(height: 6),
-          const Text('Edit these in the Daily Log tab.',
-              style: TextStyle(fontSize: 11, color: AppTheme.outline)),
-        ],
-      ),
-    );
-  }
+    final nightmare = log?.hadNightmare ?? false;
+    final emotions = log?.emotions ?? const <String>[];
+    final hasAny =
+        mood > 0 || sleep > 0 || quality > 0 || nightmare || emotions.isNotEmpty;
+    if (!hasAny) return const SizedBox.shrink();
 
-  Widget _readOnlyChip(IconData icon, String label) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: AppTheme.borderDefault),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 14, color: AppTheme.outline),
-          const SizedBox(width: 5),
-          Text(label, style: const TextStyle(fontSize: 12, color: AppTheme.onSurface)),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Wrap(
+          spacing: 8,
+          runSpacing: 6,
+          children: [
+            if (mood > 0)
+              _summaryChip(Icons.mood, '${mood.toStringAsFixed(1)} / 10',
+                  _moodColor(mood).withValues(alpha: 0.12), _moodColor(mood)),
+            if (sleep > 0)
+              _summaryChip(Icons.bedtime_outlined, '${sleep.toStringAsFixed(1)}h',
+                  AppTheme.secondaryFixed.withValues(alpha: 0.5), AppTheme.secondary),
+            if (quality > 0)
+              _summaryChip(Icons.star_outline, 'Quality $quality/10',
+                  AppTheme.secondaryFixed.withValues(alpha: 0.3), AppTheme.secondary),
+            if (nightmare)
+              _summaryChip(Icons.nightlight_outlined, 'Nightmare',
+                  const Color(0xFFFFDAD6), AppTheme.error),
+          ],
+        ),
+        if (emotions.isNotEmpty) ...[
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 6,
+            runSpacing: 4,
+            children: emotions
+                .map((e) => Chip(
+                      label: Text(e, style: const TextStyle(fontSize: 11)),
+                      padding: EdgeInsets.zero,
+                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      backgroundColor: AppTheme.surfaceContainerHighest,
+                      side: BorderSide.none,
+                    ))
+                .toList(),
+          ),
         ],
-      ),
+        const SizedBox(height: 20),
+      ],
     );
   }
 
@@ -1012,7 +1003,6 @@ class _EditJournalSheetState extends State<_EditJournalSheet> {
                 const SizedBox(height: 20),
 
                 _buildLoggedInfo(),
-                const SizedBox(height: 20),
 
                 const Text('Photo', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppTheme.onSurface)),
                 const SizedBox(height: 8),

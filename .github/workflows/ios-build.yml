@@ -23,7 +23,7 @@ concurrency:
 jobs:
   build-ipa:
     name: Build unsigned IPA
-    runs-on: macos-14        # Apple-silicon macOS runner (free minutes on public/personal repos)
+    runs-on: macos-15        # Sequoia runner — ships Xcode 16 (Swift 6), required by current Firebase SDK
 
     defaults:
       run:
@@ -32,6 +32,20 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      # Current Firebase iOS SDK (pulled by cloud_firestore/firebase_core) is written
+      # in Swift 6 (uses `sending`, AccessLevelOnImport, ownership specifiers), so it
+      # needs Xcode 16+. Xcode 15's Swift 5.10 compiler fails with "Cannot find type
+      # 'sending' in scope". Pin the newest stable Xcode on the runner.
+      - name: Select latest stable Xcode (Swift 6)
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Show Xcode / Swift versions
+        run: |
+          xcodebuild -version
+          swift --version
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2

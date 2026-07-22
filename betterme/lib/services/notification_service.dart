@@ -113,7 +113,8 @@ class NotificationService {
             importance: Importance.high,
             priority: Priority.high,
           ),
-          iOS: DarwinNotificationDetails(),
+          iOS: DarwinNotificationDetails(
+            presentAlert: true, presentBadge: true, presentSound: true),
         ),
         androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
         uiLocalNotificationDateInterpretation:
@@ -189,7 +190,8 @@ class NotificationService {
             importance: Importance.defaultImportance,
             priority: Priority.defaultPriority,
           ),
-          iOS: DarwinNotificationDetails(),
+          iOS: DarwinNotificationDetails(
+            presentAlert: true, presentBadge: true, presentSound: true),
         ),
       );
     } catch (e) {
@@ -222,7 +224,8 @@ class NotificationService {
             importance: Importance.high,
             priority: Priority.high,
           ),
-          iOS: DarwinNotificationDetails(),
+          iOS: DarwinNotificationDetails(
+            presentAlert: true, presentBadge: true, presentSound: true),
         ),
         androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
       );

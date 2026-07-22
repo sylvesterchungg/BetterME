@@ -63,7 +63,12 @@ class _PersonalDiaryScreenState extends State<PersonalDiaryScreen> {
     final provider = context.watch<AppProvider>();
     final myLogs = List<LogEntry>.from(provider.logs)
       ..sort((a, b) => b.date.compareTo(a.date));
-    final filtered = myLogs.where(_matchesSearch).toList();
+    // A journal entry is a day with an actual note or photo. Mood/sleep are
+    // captured in the Daily Log tab and don't create a journal card on their own.
+    final filtered = myLogs
+        .where((l) => l.notes.isNotEmpty || l.photoUrl.isNotEmpty)
+        .where(_matchesSearch)
+        .toList();
     final friendsLogs = provider.friendsSharedLogs;
 
     return SafeArea(
@@ -491,9 +496,6 @@ class _PersonalDiaryScreenState extends State<PersonalDiaryScreen> {
       dateLabel = DateFormat('EEE, MMM dd, yyyy').format(log.date);
     }
 
-    final hasMood = log.moodScore > 0;
-    final hasSleep = log.sleepHours > 0;
-
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
@@ -509,7 +511,7 @@ class _PersonalDiaryScreenState extends State<PersonalDiaryScreen> {
             padding: const EdgeInsets.fromLTRB(16, 14, 8, 0),
             child: Row(
               children: [
-                Icon(_moodIcon(log.moodScore), color: _moodColor(log.moodScore), size: 22),
+                const Icon(Icons.article_outlined, color: AppTheme.outline, size: 20),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(dateLabel, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: AppTheme.onSurface)),
@@ -533,84 +535,6 @@ class _PersonalDiaryScreenState extends State<PersonalDiaryScreen> {
               ],
             ),
           ),
-
-          // Mood + sleep summary
-          if (hasMood || hasSleep)
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              child: Wrap(
-                spacing: 8,
-                runSpacing: 6,
-                children: [
-                  if (hasMood)
-                    _summaryChip(
-                      Icons.mood,
-                      '${log.moodScore.toStringAsFixed(1)} / 10',
-                      _moodColor(log.moodScore).withValues(alpha: 0.12),
-                      _moodColor(log.moodScore),
-                    ),
-                  if (hasSleep) ...[
-                    _summaryChip(
-                      Icons.bedtime_outlined,
-                      '${log.sleepHours.toStringAsFixed(1)}h',
-                      AppTheme.secondaryFixed.withValues(alpha: 0.5),
-                      AppTheme.secondary,
-                    ),
-                    if (log.sleepQuality > 0)
-                      _summaryChip(
-                        Icons.star_outline,
-                        'Quality ${log.sleepQuality}/10',
-                        AppTheme.secondaryFixed.withValues(alpha: 0.3),
-                        AppTheme.secondary,
-                      ),
-                    if (log.hadNightmare)
-                      _summaryChip(
-                        Icons.nightlight_outlined,
-                        'Nightmare',
-                        const Color(0xFFFFDAD6),
-                        AppTheme.error,
-                      ),
-                  ],
-                ],
-              ),
-            ),
-
-          // Emotions
-          if (log.emotions.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Wrap(
-                spacing: 6,
-                runSpacing: 4,
-                children: log.emotions.map((e) => Chip(
-                  label: Text(e, style: const TextStyle(fontSize: 11)),
-                  padding: EdgeInsets.zero,
-                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  backgroundColor: AppTheme.surfaceContainerHighest,
-                  side: BorderSide.none,
-                )).toList(),
-              ),
-            ),
-
-          // Trigger
-          if (log.trigger.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 6, 16, 0),
-              child: Row(
-                children: [
-                  const Icon(Icons.bolt, size: 14, color: AppTheme.outline),
-                  const SizedBox(width: 4),
-                  Expanded(
-                    child: Text(
-                      log.trigger,
-                      style: const TextStyle(fontSize: 12, color: AppTheme.outline),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                ],
-              ),
-            ),
 
           // Notes
           if (log.notes.isNotEmpty)
@@ -821,19 +745,13 @@ class _EditJournalSheet extends StatefulWidget {
 }
 
 class _EditJournalSheetState extends State<_EditJournalSheet> {
-  static const _emotionOptions = ['Anxiety', 'Fatigue', 'Headache', 'Nausea', 'Pain', 'Joy', 'Stress', 'Calm'];
-  static const _qualityLevels = [0, 2, 4, 6, 8, 10];
-  static const _qualityLabels = ['Not set', 'Restless', 'Poor', 'Good', 'Solid', 'Deep'];
-
+  // The journal entry is intentionally just a photo + a note (+ a share
+  // toggle). Mood, sleep and symptoms are captured in the Daily Log tab and are
+  // deliberately not edited here, so writing a journal entry never overwrites
+  // them.
   late final DateTime _date;
-  late double _moodScore;
-  late double _sleepHours;
-  late int _sleepQuality;
-  late bool _hadNightmare;
   late bool _isShared;
   late final TextEditingController _notesCtrl;
-  late final TextEditingController _triggerCtrl;
-  late final Set<String> _emotions;
   late String _photoUrl;
   bool _saving = false;
   bool _uploadingPhoto = false;
@@ -844,14 +762,8 @@ class _EditJournalSheetState extends State<_EditJournalSheet> {
     super.initState();
     final log = widget.log;
     _date = log?.date ?? widget.initialDate ?? DateTime.now();
-    _moodScore = log?.moodScore ?? 0;
-    _sleepHours = log?.sleepHours ?? 0;
-    _sleepQuality = log?.sleepQuality ?? 0;
-    _hadNightmare = log?.hadNightmare ?? false;
     _isShared = log?.isSharedWithFriends ?? false;
     _notesCtrl = TextEditingController(text: log?.notes ?? '');
-    _triggerCtrl = TextEditingController(text: log?.trigger ?? '');
-    _emotions = {...(log?.emotions ?? const [])};
     _photoUrl = log?.photoUrl ?? '';
   }
 
@@ -889,22 +801,17 @@ class _EditJournalSheetState extends State<_EditJournalSheet> {
   @override
   void dispose() {
     _notesCtrl.dispose();
-    _triggerCtrl.dispose();
     super.dispose();
   }
 
   Future<void> _save() async {
     if (_saving) return;
     setState(() => _saving = true);
+    // Only the journal fields — mood/sleep/quality live in the Daily Log tab, so
+    // we deliberately don't write them here (the upsert leaves them untouched).
     final fields = <String, dynamic>{
-      'moodScore': _moodScore,
-      'sleepHours': _sleepHours,
-      'sleepQuality': _sleepQuality,
-      'hadNightmare': _hadNightmare,
       'isSharedWithFriends': _isShared,
       'notes': _notesCtrl.text.trim(),
-      'trigger': _triggerCtrl.text.trim(),
-      'emotions': _emotions.toList(),
       'photoUrl': _photoUrl,
     };
     await widget.provider.saveLogFields(_date, fields);
@@ -945,103 +852,32 @@ class _EditJournalSheetState extends State<_EditJournalSheet> {
                 ),
                 const SizedBox(height: 20),
 
-                _sectionLabel('Mood', _moodScore <= 0 ? 'Not logged' : _moodScore.toStringAsFixed(1)),
-                Slider(
-                  value: _moodScore,
-                  min: 0,
-                  max: 10,
-                  divisions: 20,
-                  activeColor: AppTheme.primary,
-                  onChanged: (v) => setState(() => _moodScore = v),
-                ),
-                const SizedBox(height: 8),
-
-                _sectionLabel('Sleep hours', _sleepHours <= 0 ? 'Not logged' : '${_sleepHours.toStringAsFixed(1)}h'),
-                Slider(
-                  value: _sleepHours,
-                  min: 0,
-                  max: 12,
-                  divisions: 24,
-                  activeColor: AppTheme.secondary,
-                  onChanged: (v) => setState(() => _sleepHours = v),
-                ),
-                const SizedBox(height: 12),
-
-                const Text('Sleep quality', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppTheme.onSurface)),
-                const SizedBox(height: 8),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: List.generate(_qualityLevels.length, (i) {
-                    final level = _qualityLevels[i];
-                    final selected = _sleepQuality == level;
-                    return ChoiceChip(
-                      label: Text(_qualityLabels[i]),
-                      selected: selected,
-                      selectedColor: AppTheme.primaryFixed,
-                      onSelected: (_) => setState(() => _sleepQuality = level),
-                    );
-                  }),
-                ),
-                const SizedBox(height: 16),
-
-                SwitchListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: const Text('Had a nightmare', style: TextStyle(fontSize: 14)),
-                  value: _hadNightmare,
-                  onChanged: (v) => setState(() => _hadNightmare = v),
-                ),
-                SwitchListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: const Text('Visible to friends', style: TextStyle(fontSize: 14)),
-                  value: _isShared,
-                  onChanged: (v) => setState(() => _isShared = v),
-                ),
-                const SizedBox(height: 8),
-
-                const Text('Emotions', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppTheme.onSurface)),
-                const SizedBox(height: 8),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: _emotionOptions.map((e) {
-                    final selected = _emotions.contains(e);
-                    return FilterChip(
-                      label: Text(e),
-                      selected: selected,
-                      selectedColor: AppTheme.primaryFixed,
-                      onSelected: (sel) => setState(() => sel ? _emotions.add(e) : _emotions.remove(e)),
-                    );
-                  }).toList(),
-                ),
-                const SizedBox(height: 16),
-
-                const Text('Trigger', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppTheme.onSurface)),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: _triggerCtrl,
-                  decoration: const InputDecoration(
-                    hintText: 'e.g. Work, Exercise',
-                    border: OutlineInputBorder(),
-                    isDense: true,
-                  ),
-                ),
-                const SizedBox(height: 16),
-
                 const Text('Photo', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppTheme.onSurface)),
                 const SizedBox(height: 8),
                 _buildPhotoField(),
-                const SizedBox(height: 16),
+                const SizedBox(height: 20),
 
                 const Text('Notes', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppTheme.onSurface)),
                 const SizedBox(height: 8),
                 TextField(
                   controller: _notesCtrl,
-                  maxLines: 5,
+                  maxLines: 6,
                   decoration: const InputDecoration(
                     hintText: 'How was your day?',
                     border: OutlineInputBorder(),
                   ),
+                ),
+                const SizedBox(height: 12),
+
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Visible to friends', style: TextStyle(fontSize: 14)),
+                  subtitle: const Text(
+                    'Share this entry to your friends’ feed',
+                    style: TextStyle(fontSize: 12, color: AppTheme.outline),
+                  ),
+                  value: _isShared,
+                  onChanged: (v) => setState(() => _isShared = v),
                 ),
                 const SizedBox(height: 20),
 
@@ -1072,19 +908,6 @@ class _EditJournalSheetState extends State<_EditJournalSheet> {
             ),
           ),
         ),
-      ),
-    );
-  }
-
-  Widget _sectionLabel(String title, String value) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 2),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(title, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppTheme.onSurface)),
-          Text(value, style: const TextStyle(fontSize: 13, color: AppTheme.outline)),
-        ],
       ),
     );
   }

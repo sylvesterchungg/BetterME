@@ -46,11 +46,17 @@ jobs:
       # error copying prebuilt frameworks into build/ios/SourcePackages/.
       # Force the proven CocoaPods path instead (this is a global flutter setting,
       # so it must run before pub get / build ios).
+
+      - name: Clean Flutter
+        run: flutter clean
+
       - name: Use CocoaPods instead of Swift Package Manager
         run: flutter config --no-enable-swift-package-manager
 
       - name: Install Dart/Flutter dependencies
-        run: flutter pub get
+        run: |
+          flutter pub upgrade
+          flutter pub get
 
       # Optional sanity checks. `analyze` won't fail the build (warnings are common),
       # but it surfaces problems in the logs.

@@ -29,7 +29,7 @@ betterme/
 │   ├── theme.dart             # Material Design theme (light/dark)
 │   ├── firebase_options.dart  # Firebase platform-specific config (auto-generated)
 │   ├── models/
-│   │   └── models.dart        # Data models (User, Task, LogEntry, Friend, TaskCategory)
+│   │   └── models.dart        # Data models (User, PrivateProfile, Task, LogEntry, Friend, TaskCategory)
 │   ├── services/
 │   │   └── database_service.dart  # Firestore & Firebase Storage operations
 │   ├── providers/
@@ -120,11 +120,12 @@ All models have:
 
 ### `models.dart`
 **Models:**
-1. **User**: Profile info, streak, score, water intake, friends list
-2. **Task**: Title, completion status, category, due date, reminder time, repeat interval
-3. **TaskCategory**: Custom task categories with icons
-4. **LogEntry**: Sleep hours, mood score, notes, triggers, emotions
-5. **Friend**: Reference to friend with avatar, username, streak, activity
+1. **User**: Public profile info (username, avatar, streak, score, water intake, friends list). World-readable — holds **no PII**.
+2. **PrivateProfile**: Owner-only PII (birth date, phone). Stored in `privateProfile/{userId}`, never on the `users` doc. Keep any new personal details here.
+3. **Task**: Title, completion status, category, due date, reminder time, repeat interval
+4. **TaskCategory**: Custom task categories with icons
+5. **LogEntry**: Sleep hours, mood score, notes, triggers, emotions
+6. **Friend**: Reference to friend with avatar, username, streak, activity
 
 ---
 
@@ -144,9 +145,10 @@ cd betterme
 firebase deploy --only firestore:rules,firestore:indexes
 ```
 
-**Model (as of 2026-07-01):**
+**Model (as of 2026-07-22):**
 - **Private, owner-only** (`resource.data.userId == request.auth.uid`): `logs`, `tasks`, `taskCategories`, `productivity`. A user can never read another user's mood/sleep logs — this is what enforces privacy at the data layer, independent of the app UI.
-- **`users` profiles**: readable by any signed-in user (the global leaderboard, "add friend by username" search, and the friends list all read other users' profile docs). Profile docs hold no private logs, so this is intentional.
+- **`privateProfile/{userId}`** (owner-only, keyed by uid — `request.auth.uid == userId`): personally identifiable info that must **not** be world-readable — currently **birth date and phone number** (`PrivateProfile` model). This doc is never readable by other users. **Keep any new PII here, never on `users`.**
+- **`users` profiles**: readable by any signed-in user (the global leaderboard, "add friend by username" search, and the friends list all read other users' profile docs). Profile docs hold no private logs and **no PII** (that lives in `privateProfile`), so this is intentional.
 - **`friendRequests`**: visible only to the sender or recipient.
 
 > **⚠️ Known limitation (friendship is not cryptographically two-sided):** the `users` update rule permits *any* signed-in user to modify **only** the `friendsIds` field of *another* user's doc. This is required so that accepting a friend request can add each user to the other's friends list without a Cloud Function. It cannot touch any other field (scores/usernames stay protected), but it does mean a client could unilaterally add itself to someone's `friendsIds`. Acceptable for the current client-only phase; a proper fix would move the mutual-add into a Cloud Function (or callable) and lock `friendsIds` to server writes only. See [`friendRequests` handling in `database_service.dart`](betterme/lib/services/database_service.dart).

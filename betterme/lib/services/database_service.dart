@@ -54,6 +54,26 @@ class DatabaseService {
     });
   }
 
+  // ── Private profile (PII) ────────────────────────────────────────────────
+  // Owner-only doc (birth date, phone) kept out of the world-readable `users`
+  // doc. Rules restrict read/write to request.auth.uid == userId.
+
+  Stream<PrivateProfile> streamPrivateProfile(String userId) {
+    return _db.collection('privateProfile').doc(userId).snapshots().map((doc) {
+      if (doc.exists && doc.data() != null) {
+        return PrivateProfile.fromMap(doc.data()!);
+      }
+      return const PrivateProfile();
+    });
+  }
+
+  Future<void> savePrivateProfile(String userId, PrivateProfile profile) async {
+    await _db
+        .collection('privateProfile')
+        .doc(userId)
+        .set(profile.toMap(), SetOptions(merge: true));
+  }
+
   Future<void> updateStreak(String userId, int newStreak) async {
     await _db.collection('users').doc(userId).update({'streak': newStreak});
   }
@@ -408,5 +428,37 @@ class DatabaseService {
     final data = doc.data();
     if (data == null) return null;
     return AIInsight.fromMap(data);
+  }
+
+  // Coping suggestions share the owner-only `insights` collection, in their own
+  // per-user doc: `${userId}_coping`.
+  Future<void> saveCoping(String userId, AICopingTips coping) async {
+    await _db.collection('insights').doc('${userId}_coping').set(
+      {'userId': userId, ...coping.toMap()},
+      SetOptions(merge: true),
+    );
+  }
+
+  Future<AICopingTips?> getCachedCoping(String userId) async {
+    final doc = await _db.collection('insights').doc('${userId}_coping').get();
+    final data = doc.data();
+    if (data == null) return null;
+    return AICopingTips.fromMap(data);
+  }
+
+  // The morning nudge shares the owner-only `insights` collection too, in its
+  // own per-user doc: `${userId}_nudge`. No new collection / rules deploy.
+  Future<void> saveNudge(String userId, MorningNudge nudge) async {
+    await _db.collection('insights').doc('${userId}_nudge').set(
+      {'userId': userId, ...nudge.toMap()},
+      SetOptions(merge: true),
+    );
+  }
+
+  Future<MorningNudge?> getCachedNudge(String userId) async {
+    final doc = await _db.collection('insights').doc('${userId}_nudge').get();
+    final data = doc.data();
+    if (data == null) return null;
+    return MorningNudge.fromMap(data);
   }
 }

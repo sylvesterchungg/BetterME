@@ -2,10 +2,49 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:firebase_auth/firebase_auth.dart' as auth;
-import 'package:cloud_firestore/cloud_firestore.dart';
 import '../providers/app_provider.dart';
 import '../theme.dart';
+import 'personal_info_screen.dart';
+
+/// Full-screen wrapper around [ProfileTab] with a back-enabled app bar.
+///
+/// Every tab reaches Profile/Settings by pushing this route, so the header
+/// chrome (back button, title, divider) lives in one place instead of being
+/// duplicated at each entry point.
+class ProfileScreen extends StatelessWidget {
+  const ProfileScreen({super.key});
+
+  /// Opens the Profile/Settings screen from anywhere in the app.
+  static Future<void> open(BuildContext context) {
+    return Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const ProfileScreen()),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: AppTheme.surfaceContainerLow,
+      appBar: AppBar(
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, color: AppTheme.onSurface),
+          onPressed: () => Navigator.pop(context),
+        ),
+        title: const Text('Profile',
+            style: TextStyle(fontWeight: FontWeight.w600)),
+        backgroundColor: Colors.white,
+        surfaceTintColor: Colors.white,
+        elevation: 0,
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(1),
+          child: Container(height: 1, color: AppTheme.borderDefault),
+        ),
+      ),
+      body: const ProfileTab(),
+    );
+  }
+}
 
 class ProfileTab extends StatefulWidget {
   const ProfileTab({super.key});
@@ -46,103 +85,13 @@ class _ProfileTabState extends State<ProfileTab> {
     }
   }
 
-  void _showEditUsernameDialog(AppProvider provider) {
-    final controller = TextEditingController(
-      text: provider.currentUser?.username,
-    );
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Edit Username'),
-        content: TextField(
-          controller: controller,
-          decoration: const InputDecoration(labelText: 'Username'),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              final newName = controller.text.trim();
-              if (newName.isNotEmpty && provider.currentUser != null) {
-                // Update in Firestore directly for simplicity here
-                await FirebaseFirestore.instance
-                    .collection('users')
-                    .doc(provider.currentUser!.id)
-                    .update({'username': newName});
-                // Provider will auto-update via stream listener
-                Navigator.pop(ctx);
-              }
-            },
-            child: const Text('Save'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _showChangePasswordDialog() {
-    final controller = TextEditingController();
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Change Password'),
-        content: TextField(
-          controller: controller,
-          obscureText: true,
-          decoration: const InputDecoration(labelText: 'New Password'),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              final newPass = controller.text.trim();
-              if (newPass.length >= 6) {
-                try {
-                  await auth.FirebaseAuth.instance.currentUser?.updatePassword(
-                    newPass,
-                  );
-                  Navigator.pop(ctx);
-                  if (mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Password updated successfully'),
-                      ),
-                    );
-                  }
-                } catch (e) {
-                  if (mounted) {
-                    ScaffoldMessenger.of(
-                      context,
-                    ).showSnackBar(SnackBar(content: Text('Error: $e')));
-                  }
-                }
-              } else {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Password must be at least 6 characters'),
-                  ),
-                );
-              }
-            },
-            child: const Text('Update'),
-          ),
-        ],
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     return Consumer<AppProvider>(
       builder: (context, provider, child) {
-        if (provider.currentUser == null)
+        if (provider.currentUser == null) {
           return const Center(child: CircularProgressIndicator());
+        }
 
         return SafeArea(
           child: SingleChildScrollView(
@@ -227,9 +176,16 @@ class _ProfileTabState extends State<ProfileTab> {
         ),
         const SizedBox(height: 16),
         Text(
-          user.username,
+          user.name.isNotEmpty ? user.name : user.username,
           style: const TextStyle(fontSize: 28, fontWeight: FontWeight.bold),
         ),
+        if (user.name.isNotEmpty) ...[
+          const SizedBox(height: 2),
+          Text(
+            '@${user.username}',
+            style: const TextStyle(fontSize: 14, color: AppTheme.outline),
+          ),
+        ],
         const SizedBox(height: 4),
         Text(
           ' ${user.streak} Day Streak'
@@ -238,7 +194,7 @@ class _ProfileTabState extends State<ProfileTab> {
         ),
         const SizedBox(height: 16),
         ElevatedButton(
-          onPressed: () => _showEditUsernameDialog(provider),
+          onPressed: () => PersonalInfoScreen.open(context),
           style: ElevatedButton.styleFrom(
             backgroundColor: AppTheme.primary,
             foregroundColor: Colors.white,
@@ -248,7 +204,7 @@ class _ProfileTabState extends State<ProfileTab> {
             padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
           ),
           child: const Text(
-            'Edit Username',
+            'Edit Profile',
             style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
           ),
         ),
@@ -305,10 +261,6 @@ class _ProfileTabState extends State<ProfileTab> {
   }
 
   Widget _buildAccountSection(AppProvider provider) {
-    final isEmailUser = auth.FirebaseAuth.instance.currentUser?.providerData
-            .any((p) => p.providerId == 'password') ??
-        false;
-
     return _buildCard(
       title: 'Account',
       icon: Icons.account_circle,
@@ -316,14 +268,8 @@ class _ProfileTabState extends State<ProfileTab> {
         _buildListTile(
           'Personal Info',
           Icons.chevron_right,
-          onTap: () => _showEditUsernameDialog(provider),
+          onTap: () => PersonalInfoScreen.open(context),
         ),
-        if (isEmailUser)
-          _buildListTile(
-            'Password & Security',
-            Icons.chevron_right,
-            onTap: _showChangePasswordDialog,
-          ),
       ],
     );
   }
@@ -433,18 +379,32 @@ class _ProfileTabState extends State<ProfileTab> {
     String title,
     IconData trailingIcon, {
     VoidCallback? onTap,
+    String? value,
   }) {
     return InkWell(
       onTap: onTap,
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 12),
         child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Text(
-              title,
-              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+            Expanded(
+              child: Text(
+                title,
+                style:
+                    const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+              ),
             ),
+            if (value != null)
+              Flexible(
+                child: Text(
+                  value,
+                  textAlign: TextAlign.right,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                      fontSize: 13, color: AppTheme.onSurfaceVariant),
+                ),
+              ),
+            const SizedBox(width: 6),
             Icon(trailingIcon, color: AppTheme.outline),
           ],
         ),
@@ -494,28 +454,14 @@ class _ProfileTabState extends State<ProfileTab> {
   Widget _buildLogoutSection(AppProvider provider) {
     return Column(
       children: [
-        // TEMPORARY / DEV-ONLY: one-tap demo data. Remove before shipping.
-        Builder(
-          builder: (context) => OutlinedButton.icon(
-            onPressed: () async {
-              final messenger = ScaffoldMessenger.of(context);
-              messenger.showSnackBar(
-                const SnackBar(content: Text('Seeding demo data…')),
-              );
-              await provider.seedDemoData();
-              messenger.showSnackBar(
-                const SnackBar(
-                    content: Text('Demo data added — check Trends & AI insight')),
-              );
-            },
-            icon: const Icon(Icons.auto_graph),
-            label: const Text('Seed demo data (dev)'),
-          ),
-        ),
-        const SizedBox(height: 16),
         OutlinedButton.icon(
           onPressed: () {
-            // AuthGate returns to LoginScreen once sign-out completes.
+            // Profile/Settings is a route pushed on top of AuthGate. Signing out
+            // clears currentUser, but AuthGate's swap to LoginScreen happens on
+            // the root route *underneath* this one — leaving this screen's
+            // null-guard spinner on top forever. Pop back to the root first so
+            // the LoginScreen AuthGate rebuilds is the visible route.
+            Navigator.of(context).popUntil((route) => route.isFirst);
             provider.logout();
           },
           icon: const Icon(Icons.logout, color: AppTheme.error),

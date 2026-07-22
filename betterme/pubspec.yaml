@@ -35,14 +35,18 @@ flutter:
     - assets/icon/Icon.png
 
 flutter_launcher_icons:
-  image_path: "assets/icon/Icon.png"
+  image_path: "assets/icon/Icon_square.png"
   android: true
   ios: true
   remove_alpha_ios: true
+  # Android adaptive icon: near-black background matching the artwork, with the
+  # moon/checklist centered inside the safe zone so it never gets masked.
+  adaptive_icon_background: "#020B12"
+  adaptive_icon_foreground: "assets/icon/Icon_foreground.png"
   web:
     generate: true
-    image_path: "assets/icon/Icon.png"
+    image_path: "assets/icon/Icon_square.png"
   windows:
     generate: true
-    image_path: "assets/icon/Icon.png"
+    image_path: "assets/icon/Icon_square.png"
     icon_size: 256

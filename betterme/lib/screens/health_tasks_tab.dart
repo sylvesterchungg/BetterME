@@ -201,27 +201,32 @@ class _HealthTasksTabState extends State<HealthTasksTab> {
 
   @override
   Widget build(BuildContext context) {
-    return Consumer<AppProvider>(
-      builder: (context, provider, child) {
-        final customCategorySections = provider.taskCategories.map((category) {
-          return _TaskCategoryUi(
-            name: category.name,
-            iconKey: category.iconKey,
-            icon: TaskCategory.iconFromKey(category.iconKey),
-            backgroundColor: AppTheme.surfaceContainerLow,
-            iconColor: AppTheme.primary,
-          );
-        }).toList();
+    // The Scaffold is built ONCE and kept out of the Consumer on purpose: it
+    // hosts the water "Undo" SnackBar, and if the Scaffold rebuilt on every
+    // provider tick (the pedometer stream fires constantly on a device), the
+    // SnackBar's auto-dismiss timer kept resetting and it never went away. Only
+    // the body below rebuilds with provider changes.
+    return Scaffold(
+      backgroundColor: Colors.transparent,
+      body: SafeArea(
+        child: Consumer<AppProvider>(
+          builder: (context, provider, child) {
+            final customCategorySections = provider.taskCategories.map((category) {
+              return _TaskCategoryUi(
+                name: category.name,
+                iconKey: category.iconKey,
+                icon: TaskCategory.iconFromKey(category.iconKey),
+                backgroundColor: AppTheme.surfaceContainerLow,
+                iconColor: AppTheme.primary,
+              );
+            }).toList();
 
-        final allCategories = [
-          ..._builtInTaskCategories,
-          ...customCategorySections,
-        ];
+            final allCategories = [
+              ..._builtInTaskCategories,
+              ...customCategorySections,
+            ];
 
-        return Scaffold(
-          backgroundColor: Colors.transparent,
-          body: SafeArea(
-            child: SingleChildScrollView(
+            return SingleChildScrollView(
               padding: const EdgeInsets.all(20),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -238,19 +243,20 @@ class _HealthTasksTabState extends State<HealthTasksTab> {
                   const SizedBox(height: 80),
                 ],
               ),
-            ),
-          ),
-          floatingActionButton: FloatingActionButton(
-            onPressed: () => _showAddTaskBottomSheet(context, provider),
-            backgroundColor: AppTheme.primary,
-            foregroundColor: Colors.white,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(16),
-            ),
-            child: const Icon(Icons.add),
-          ),
-        );
-      },
+            );
+          },
+        ),
+      ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: () =>
+            _showAddTaskBottomSheet(context, context.read<AppProvider>()),
+        backgroundColor: AppTheme.primary,
+        foregroundColor: Colors.white,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: const Icon(Icons.add),
+      ),
     );
   }
 
@@ -941,7 +947,6 @@ class _AddTaskBottomSheetState extends State<AddTaskBottomSheet> {
     'Daily',
     'Weekly',
     'Monthly',
-    'Custom',
   ];
 
   List<_TaskCategoryUi> get _categoryOptions {
@@ -978,7 +983,10 @@ class _AddTaskBottomSheetState extends State<AddTaskBottomSheet> {
           );
         }
       }
-      _repeatInterval = task.repeatInterval;
+      // 'Custom' was removed (it never actually recurred); fall back to 'None'
+      // so an older task edited now shows a valid, selectable option.
+      _repeatInterval =
+          _repeatOptions.contains(task.repeatInterval) ? task.repeatInterval : 'None';
     }
   }
 
@@ -1430,26 +1438,13 @@ class _AddTaskBottomSheetState extends State<AddTaskBottomSheet> {
           borderRadius: BorderRadius.circular(26),
           border: Border.all(color: AppTheme.primaryContainer, width: 1.5),
         ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (option == 'Custom') ...[
-              Icon(
-                Icons.settings_outlined,
-                size: 16,
-                color: isSelected ? Colors.white : AppTheme.onSurfaceVariant,
-              ),
-              const SizedBox(width: 6),
-            ],
-            Text(
-              option,
-              style: TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
-                color: isSelected ? Colors.white : AppTheme.onSurfaceVariant,
-              ),
-            ),
-          ],
+        child: Text(
+          option,
+          style: TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.w600,
+            color: isSelected ? Colors.white : AppTheme.onSurfaceVariant,
+          ),
         ),
       ),
     );

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/app_provider.dart';
 import '../theme.dart';
+import '../utils/image_helpers.dart';
 import 'dashboard_tab.dart';
 import 'daily_log_tab.dart';
 import 'health_tasks_tab.dart';
@@ -36,7 +37,8 @@ class _MainScreenState extends State<MainScreen> {
     final url = Provider.of<AppProvider>(context).currentUser?.avatarUrl;
     if (url == null || url.isEmpty || url == _preloadedAvatarUrl) return;
     _preloadedAvatarUrl = url;
-    precacheImage(NetworkImage(url), context);
+    final provider = imageProviderFor(url);
+    if (provider != null) precacheImage(provider, context);
   }
 
   final List<Widget> _tabs = [

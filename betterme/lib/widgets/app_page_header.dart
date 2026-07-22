@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../theme.dart';
 import '../models/models.dart';
+import '../utils/image_helpers.dart';
 import '../screens/notifications_screen.dart';
 import '../screens/profile_tab.dart';
 
@@ -88,14 +89,11 @@ class AppPageHeader extends StatelessWidget {
       ),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(22),
-        child: avatarUrl != null && avatarUrl.isNotEmpty
-            ? Image.network(
-                avatarUrl,
-                fit: BoxFit.cover,
-                errorBuilder: (_, _, _) =>
-                    const Icon(Icons.person, color: AppTheme.outline),
-              )
-            : const Icon(Icons.person, color: AppTheme.outline),
+        child: storedImage(
+          avatarUrl ?? '',
+          fit: BoxFit.cover,
+          fallback: const Icon(Icons.person, color: AppTheme.outline),
+        ),
       ),
     );
   }

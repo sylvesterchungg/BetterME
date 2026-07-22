@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import 'package:image_picker/image_picker.dart';
 import '../providers/app_provider.dart';
 import '../theme.dart';
+import '../utils/image_helpers.dart';
 import 'personal_info_screen.dart';
 
 /// Full-screen wrapper around [ProfileTab] with a back-enabled app bar.
@@ -57,7 +58,12 @@ class _ProfileTabState extends State<ProfileTab> {
   final ImagePicker _picker = ImagePicker();
 
   Future<void> _pickAndUploadImage(AppProvider provider) async {
-    final XFile? image = await _picker.pickImage(source: ImageSource.gallery);
+    final XFile? image = await _picker.pickImage(
+      source: ImageSource.gallery,
+      maxWidth: 512,
+      maxHeight: 512,
+      imageQuality: 80,
+    );
     if (image != null) {
       if (mounted) {
         ScaffoldMessenger.of(
@@ -139,9 +145,7 @@ class _ProfileTabState extends State<ProfileTab> {
                 ),
                 child: CircleAvatar(
                   backgroundColor: AppTheme.borderDefault,
-                  backgroundImage: user.avatarUrl.isNotEmpty
-                      ? NetworkImage(user.avatarUrl)
-                      : null,
+                  backgroundImage: imageProviderFor(user.avatarUrl),
                   onBackgroundImageError:
                       user.avatarUrl.isNotEmpty ? (_, _) {} : null,
                   child: user.avatarUrl.isEmpty

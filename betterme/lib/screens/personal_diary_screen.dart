@@ -6,6 +6,7 @@ import 'package:intl/intl.dart';
 import '../providers/app_provider.dart';
 import '../models/models.dart';
 import '../theme.dart';
+import '../utils/image_helpers.dart';
 import '../widgets/app_page_header.dart';
 
 class PersonalDiaryScreen extends StatefulWidget {
@@ -629,12 +630,12 @@ class _PersonalDiaryScreenState extends State<PersonalDiaryScreen> {
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(12),
-                child: Image.network(
+                child: storedImage(
                   log.photoUrl,
                   width: double.infinity,
                   height: 180,
                   fit: BoxFit.cover,
-                  errorBuilder: (context, error, stackTrace) => Container(
+                  fallback: Container(
                     height: 180,
                     color: AppTheme.surfaceContainer,
                     child: const Center(
@@ -695,9 +696,8 @@ class _PersonalDiaryScreenState extends State<PersonalDiaryScreen> {
               // Friend avatar
               CircleAvatar(
                 radius: 16,
-                backgroundImage: friend != null && friend.avatarUrl.isNotEmpty
-                    ? NetworkImage(friend.avatarUrl)
-                    : null,
+                backgroundImage:
+                    friend != null ? imageProviderFor(friend.avatarUrl) : null,
                 backgroundColor: AppTheme.surfaceContainerHighest,
                 child: friend == null || friend.avatarUrl.isEmpty
                     ? const Icon(Icons.person, size: 16, color: AppTheme.outlineVariant)
@@ -756,12 +756,12 @@ class _PersonalDiaryScreenState extends State<PersonalDiaryScreen> {
             const SizedBox(height: 10),
             ClipRRect(
               borderRadius: BorderRadius.circular(12),
-              child: Image.network(
+              child: storedImage(
                 log.photoUrl,
                 width: double.infinity,
                 height: 160,
                 fit: BoxFit.cover,
-                errorBuilder: (context, error, stackTrace) => Container(
+                fallback: Container(
                   height: 160,
                   color: AppTheme.surfaceContainer,
                   child: const Center(
@@ -857,19 +857,29 @@ class _EditJournalSheetState extends State<_EditJournalSheet> {
 
   Future<void> _pickPhoto() async {
     if (_uploadingPhoto) return;
-    final XFile? image =
-        await _picker.pickImage(source: ImageSource.gallery, imageQuality: 85);
+    final XFile? image = await _picker.pickImage(
+      source: ImageSource.gallery,
+      maxWidth: 1080,
+      imageQuality: 70,
+    );
     if (image == null) return;
 
     setState(() => _uploadingPhoto = true);
     try {
-      final url =
-          await widget.provider.uploadJournalPhoto(File(image.path), _date);
-      if (mounted) setState(() => _photoUrl = url);
+      // No Firebase Storage on the free plan — encode the (resized) image as
+      // base64 and keep it on the log document itself.
+      final encoded = await fileToBase64(File(image.path));
+      if (!mounted) return;
+      if (encoded == null) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('That photo is too large to save. Try a smaller one.')));
+      } else {
+        setState(() => _photoUrl = encoded);
+      }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Failed to upload photo: $e')));
+            .showSnackBar(SnackBar(content: Text('Failed to add photo: $e')));
       }
     } finally {
       if (mounted) setState(() => _uploadingPhoto = false);
@@ -1122,26 +1132,18 @@ class _EditJournalSheetState extends State<_EditJournalSheet> {
       children: [
         ClipRRect(
           borderRadius: BorderRadius.circular(12),
-          child: Image.network(
+          child: storedImage(
             _photoUrl,
+            width: double.infinity,
             height: 180,
             fit: BoxFit.cover,
-            errorBuilder: (context, error, stackTrace) => Container(
+            fallback: Container(
               height: 180,
               color: AppTheme.surfaceContainer,
               child: const Center(
                 child: Icon(Icons.broken_image_outlined, color: AppTheme.outlineVariant),
               ),
             ),
-            loadingBuilder: (context, child, progress) => progress == null
-                ? child
-                : Container(
-                    height: 180,
-                    color: AppTheme.surfaceContainerLow,
-                    child: const Center(
-                      child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.primary),
-                    ),
-                  ),
           ),
         ),
         const SizedBox(height: 8),

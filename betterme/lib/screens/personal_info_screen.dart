@@ -5,6 +5,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:firebase_auth/firebase_auth.dart' as auth;
 import '../providers/app_provider.dart';
 import '../theme.dart';
+import '../utils/image_helpers.dart';
 
 /// Full-screen editor for the user's core profile details — avatar, username,
 /// birth date, phone, and (for email accounts) password. Replaces the old
@@ -78,8 +79,9 @@ class _PersonalInfoScreenState extends State<PersonalInfoScreen> {
     final messenger = ScaffoldMessenger.of(context);
     final img = await _picker.pickImage(
       source: ImageSource.gallery,
-      maxWidth: 800,
-      imageQuality: 85,
+      maxWidth: 512,
+      maxHeight: 512,
+      imageQuality: 80,
     );
     if (img == null) return;
     setState(() => _uploading = true);
@@ -354,9 +356,9 @@ class _PersonalInfoScreenState extends State<PersonalInfoScreen> {
                   blurRadius: 10,
                 ),
               ],
-              image: avatarUrl.isNotEmpty
+              image: imageProviderFor(avatarUrl) != null
                   ? DecorationImage(
-                      image: NetworkImage(avatarUrl), fit: BoxFit.cover)
+                      image: imageProviderFor(avatarUrl)!, fit: BoxFit.cover)
                   : null,
             ),
             alignment: Alignment.center,

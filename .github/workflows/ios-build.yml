@@ -75,6 +75,26 @@ jobs:
           flutter pub upgrade
           flutter pub get
 
+      # lib/config/api_keys.dart is gitignored (it holds the Gemini key), so it's
+      # absent on CI and the Dart compile fails with "Undefined name 'ApiKeys'".
+      # Recreate it here: use the GEMINI_API_KEY repo secret if it exists, otherwise
+      # fall back to the placeholder so the build still succeeds (the app disables AI
+      # insights when the key equals 'YOUR_GEMINI_API_KEY_HERE').
+      - name: Generate lib/config/api_keys.dart
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          mkdir -p lib/config
+          KEY="${GEMINI_API_KEY:-YOUR_GEMINI_API_KEY_HERE}"
+          cat > lib/config/api_keys.dart <<EOF
+          // Auto-generated in CI — do NOT commit. Real key comes from the
+          // GEMINI_API_KEY repo secret; placeholder means AI insights are disabled.
+          class ApiKeys {
+            static const geminiApiKey = '$KEY';
+          }
+          EOF
+          if [ -n "$GEMINI_API_KEY" ]; then echo "api_keys.dart: using secret"; else echo "api_keys.dart: using placeholder (AI insights disabled)"; fi
+
       # Optional sanity checks. `analyze` won't fail the build (warnings are common),
       # but it surfaces problems in the logs.
       - name: Analyze (non-blocking)
@@ -82,9 +102,11 @@ jobs:
 
       - name: Build iOS app (no code signing)
         # Produces build/ios/iphoneos/Runner.app -- compiled but unsigned.
+        # No --verbose: normal output still prints real compiler errors, but stays
+        # small enough that the GitHub log viewer doesn't truncate the step.
         run: |
           set -o pipefail
-          flutter build ios --release --no-codesign --verbose 2>&1 | tee "$RUNNER_TEMP/ios-build.log"
+          flutter build ios --release --no-codesign 2>&1 | tee "$RUNNER_TEMP/ios-build.log"
 
       - name: Diagnostics (always) — show project + build state
         if: always()

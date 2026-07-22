@@ -51,7 +51,10 @@ jobs:
         run: flutter clean
 
       - name: Use CocoaPods instead of Swift Package Manager
-        run: flutter config --no-enable-swift-package-manager
+        run: |
+          flutter config --no-enable-swift-package-manager
+          echo "===== flutter config (verify SPM flag is actually off) ====="
+          flutter config
 
       - name: Install Dart/Flutter dependencies
         run: |
@@ -65,7 +68,28 @@ jobs:
 
       - name: Build iOS app (no code signing)
         # Produces build/ios/iphoneos/Runner.app -- compiled but unsigned.
-        run: flutter build ios --release --no-codesign
+        run: |
+          set -o pipefail
+          flutter build ios --release --no-codesign --verbose 2>&1 | tee "$RUNNER_TEMP/ios-build.log"
+
+      - name: Diagnostics (always) — show project + build state
+        if: always()
+        run: |
+          echo "===== ios/ contents (Podfile generated?) ====="
+          ls -la ios/ || true
+          echo "===== build/ios/ contents ====="
+          ls -la build/ios/ || true
+          echo "===== SourcePackages dir (SPM in use?) ====="
+          ls -la build/ios/SourcePackages/ 2>/dev/null || echo "(no SourcePackages dir)"
+
+      - name: Upload full build log (always)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-build-log
+          path: ${{ runner.temp }}/ios-build.log
+          if-no-files-found: warn
+          retention-days: 14
 
       - name: Package Runner.app into an unsigned .ipa
         run: |

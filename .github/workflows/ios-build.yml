@@ -1,0 +1,74 @@
+name: Build iOS IPA (unsigned)
+
+# Builds an UNSIGNED .ipa on a cloud macOS runner.
+# You sign + install it on your iPhone with AltStore / SideStore using your
+# free Apple ID -- no Mac and no paid Apple Developer account required.
+#
+# How to run:
+#   1. Push to V1.1 or master, OR
+#   2. Go to the repo's "Actions" tab -> "Build iOS IPA (unsigned)" -> "Run workflow".
+#   3. When it finishes, open the run and download the "betterme-unsigned-ipa" artifact.
+#   4. Unzip it, then drag BetterME-unsigned.ipa into AltStore/SideStore.
+
+on:
+  push:
+    branches: [V1.1, master]
+  workflow_dispatch:   # adds a manual "Run workflow" button in the Actions tab
+
+# Cancel an in-progress run if you push again to the same branch
+concurrency:
+  group: ios-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-ipa:
+    name: Build unsigned IPA
+    runs-on: macos-14        # Apple-silicon macOS runner (free minutes on public/personal repos)
+
+    defaults:
+      run:
+        working-directory: betterme   # the Flutter app lives in the betterme/ subfolder
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true       # cache the Flutter SDK between runs for speed
+
+      - name: Show Flutter/Dart versions
+        run: flutter --version
+
+      - name: Install Dart/Flutter dependencies
+        run: flutter pub get
+
+      # Optional sanity checks. `analyze` won't fail the build (warnings are common),
+      # but it surfaces problems in the logs.
+      - name: Analyze (non-blocking)
+        run: flutter analyze || true
+
+      - name: Build iOS app (no code signing)
+        # Produces build/ios/iphoneos/Runner.app -- compiled but unsigned.
+        run: flutter build ios --release --no-codesign
+
+      - name: Package Runner.app into an unsigned .ipa
+        run: |
+          set -euo pipefail
+          cd build/ios/iphoneos
+          rm -rf Payload BetterME-unsigned.ipa
+          mkdir Payload
+          cp -R Runner.app Payload/
+          # An .ipa is just a zip of a Payload/ folder containing the .app
+          zip -qry BetterME-unsigned.ipa Payload
+          ls -lh BetterME-unsigned.ipa
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: betterme-unsigned-ipa
+          path: betterme/build/ios/iphoneos/BetterME-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 30

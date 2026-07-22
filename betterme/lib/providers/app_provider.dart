@@ -605,6 +605,9 @@ class AppProvider with ChangeNotifier {
 
     final id = await _dbService.addTask(task);
     if (currentUser!.notificationsEnabled && reminderTime != null) {
+      // Make sure the OS notification permission is granted before scheduling,
+      // otherwise the reminder is silently dropped.
+      await NotificationService.requestPermission();
       await NotificationService.scheduleTaskReminder(
           Task(id: id, userId: task.userId, title: task.title,
                dueDate: task.dueDate, reminderTime: task.reminderTime,
@@ -633,6 +636,7 @@ class AppProvider with ChangeNotifier {
     // Re-schedule with updated fields (cancel old, schedule new if applicable)
     await NotificationService.cancelTaskReminder(task.id);
     if (currentUser?.notificationsEnabled == true && task.reminderTime != null) {
+      await NotificationService.requestPermission();
       await NotificationService.scheduleTaskReminder(task);
     }
   }

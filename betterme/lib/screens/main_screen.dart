@@ -19,10 +19,9 @@ class _MainScreenState extends State<MainScreen> {
 
   // NOTE: MainScreen deliberately does NOT listen to AppProvider. It used to
   // (to precache the avatar), which rebuilt this whole Scaffold on every
-  // provider notification — and with the pedometer stream firing constantly on
-  // a real device, those rebuilds interfered with SnackBar auto-dismiss timers
-  // (e.g. the water "Undo" bar never went away). Base64 avatars render
-  // instantly, so precaching is unnecessary.
+  // provider notification. Base64 avatars render instantly, so precaching is
+  // unnecessary — and keeping the Scaffold stable avoids disturbing SnackBars
+  // hosted above it.
   final List<Widget> _tabs = [
     const DashboardTab(),
     const TrendsInsightsScreen(),

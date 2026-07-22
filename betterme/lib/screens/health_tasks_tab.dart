@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
@@ -86,6 +87,11 @@ class HealthTasksTab extends StatefulWidget {
 class _HealthTasksTabState extends State<HealthTasksTab> {
   final TextEditingController _waterController = TextEditingController();
 
+  // Backs the water "Undo" snackbar's dismissal. We close the snackbar
+  // ourselves via this timer rather than relying on SnackBar.duration, which
+  // was observed not to auto-dismiss in this app/SDK setup.
+  Timer? _undoTimer;
+
   // Selectable hydration-reminder intervals, in minutes (0 = off).
   static const List<int> _kHydrationIntervals = [0, 30, 60, 120, 180, 240];
 
@@ -110,6 +116,7 @@ class _HealthTasksTabState extends State<HealthTasksTab> {
 
   @override
   void dispose() {
+    _undoTimer?.cancel();
     _waterController.dispose();
     super.dispose();
   }
@@ -143,20 +150,27 @@ class _HealthTasksTabState extends State<HealthTasksTab> {
     AppProvider provider,
     int amount,
   ) {
-    ScaffoldMessenger.of(context).clearSnackBars();
-    ScaffoldMessenger.of(context).showSnackBar(
+    final messenger = ScaffoldMessenger.of(context);
+    _undoTimer?.cancel();
+    messenger.clearSnackBars();
+    final controller = messenger.showSnackBar(
       SnackBar(
         content: Text('Added ${amount}ml of water'),
-        duration: const Duration(seconds: 3),
+        // Very long framework duration; we drive the actual dismissal with our
+        // own timer below (SnackBar.duration wasn't auto-dismissing here).
+        duration: const Duration(days: 1),
         action: SnackBarAction(
           label: 'Undo',
           onPressed: () {
-            ScaffoldMessenger.of(context).hideCurrentSnackBar();
+            _undoTimer?.cancel();
             provider.addWaterIntake(-amount);
           },
         ),
       ),
     );
+    // Force the snackbar to close after 3 seconds regardless of the framework's
+    // own auto-dismiss behavior.
+    _undoTimer = Timer(const Duration(seconds: 3), controller.close);
   }
 
   void _showEditGoalDialog(
@@ -201,11 +215,10 @@ class _HealthTasksTabState extends State<HealthTasksTab> {
 
   @override
   Widget build(BuildContext context) {
-    // The Scaffold is built ONCE and kept out of the Consumer on purpose: it
-    // hosts the water "Undo" SnackBar, and if the Scaffold rebuilt on every
-    // provider tick (the pedometer stream fires constantly on a device), the
-    // SnackBar's auto-dismiss timer kept resetting and it never went away. Only
-    // the body below rebuilds with provider changes.
+    // The Scaffold is built ONCE and kept out of the Consumer: it hosts the
+    // water "Undo" SnackBar, and rebuilding the host Scaffold on provider
+    // changes can disturb the SnackBar. Only the body below rebuilds. (The
+    // snackbar's dismissal is also driven explicitly — see _showUndoSnackbar.)
     return Scaffold(
       backgroundColor: Colors.transparent,
       body: SafeArea(

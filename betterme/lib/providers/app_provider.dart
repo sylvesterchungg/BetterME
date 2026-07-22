@@ -7,6 +7,7 @@ import '../models/models.dart';
 import '../services/database_service.dart';
 import '../services/ai_insight_service.dart';
 import '../services/notification_service.dart';
+import '../utils/image_helpers.dart';
 import '../utils/stats.dart';
 
 class AppProvider with ChangeNotifier {
@@ -123,17 +124,18 @@ class AppProvider with ChangeNotifier {
       final extras = _pendingProfileExtras;
       final pendingName = (extras?['username'] as String?)?.trim();
 
-      // Now that we're authenticated, upload the sign-up photo (if any). Storage
-      // rules require request.auth.uid == userId, which only holds here. A real
-      // Google photo is used as the fallback; otherwise blank, so the UI shows
-      // the user's initials/person-icon default instead of a stock face.
+      // Encode the sign-up photo (if any) as base64 for the profile doc — the
+      // free Spark plan has no Cloud Storage, so images live in Firestore. A
+      // real Google photo is the fallback; otherwise blank, so the UI shows the
+      // user's initials/person-icon default instead of a stock face.
       var avatarUrl = firebaseUser.photoURL ?? '';
       final pendingPhoto = extras?['photo'];
       if (pendingPhoto is File) {
         try {
-          avatarUrl = await _dbService.uploadProfilePhoto(pendingPhoto, userId);
+          final encoded = await fileToBase64(pendingPhoto);
+          if (encoded != null) avatarUrl = encoded;
         } catch (e) {
-          debugPrint('[Signup] avatar upload failed: $e');
+          debugPrint('[Signup] avatar encode failed: $e');
         }
       }
 
@@ -865,22 +867,17 @@ class AppProvider with ChangeNotifier {
   // PROFILE METHODS
   // ==========================================
 
-  Future<void> uploadProfilePhoto(File imageFile) async {
-    if (currentUser != null) {
-      final url = await _dbService.uploadProfilePhoto(imageFile, currentUser!.id);
-      currentUser!.avatarUrl = url;
-      await _dbService.saveUserProfile(currentUser!);
-      notifyListeners();
-    }
-  }
-
-  // Uploads a photo for a journal entry and returns its download URL. The caller
-  // is responsible for persisting the URL onto the log (via saveLogFields).
-  Future<String> uploadJournalPhoto(File imageFile, DateTime date) async {
-    if (currentUser == null) return '';
-    final dateKey =
-        '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
-    return _dbService.uploadJournalPhoto(imageFile, currentUser!.id, dateKey);
+  /// Sets the profile photo from a picked (already-resized) image, storing it as
+  /// base64 on the profile doc — no Firebase Storage. Returns false if the image
+  /// is too large to fit in a Firestore document, true on success.
+  Future<bool> uploadProfilePhoto(File imageFile) async {
+    if (currentUser == null) return false;
+    final encoded = await fileToBase64(imageFile);
+    if (encoded == null) return false;
+    currentUser!.avatarUrl = encoded;
+    await _dbService.saveUserProfile(currentUser!);
+    notifyListeners();
+    return true;
   }
 
   // ==========================================

@@ -4,6 +4,7 @@ import 'package:intl/intl.dart';
 import '../providers/app_provider.dart';
 import '../models/models.dart';
 import '../theme.dart';
+import '../utils/image_helpers.dart';
 import 'notifications_screen.dart';
 import 'profile_tab.dart';
 
@@ -60,11 +61,11 @@ class DashboardTab extends StatelessWidget {
                 ),
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(26),
-                  child: user?.avatarUrl != null && user!.avatarUrl.isNotEmpty
-                      ? Image.network(user.avatarUrl, fit: BoxFit.cover,
-                          errorBuilder: (_, _, _) =>
-                              const Icon(Icons.person, color: AppTheme.outline, size: 28))
-                      : const Icon(Icons.person, color: AppTheme.outline, size: 28),
+                  child: storedImage(
+                    user?.avatarUrl ?? '',
+                    fit: BoxFit.cover,
+                    fallback: const Icon(Icons.person, color: AppTheme.outline, size: 28),
+                  ),
                 ),
               ),
               const SizedBox(width: 12),

@@ -1,6 +1,4 @@
-import 'dart:io';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_storage/firebase_storage.dart' hide Task;
 import '../models/models.dart';
 
 class DatabaseService {
@@ -22,26 +20,6 @@ class DatabaseService {
       return User.fromMap(doc.data()!, doc.id);
     }
     return null;
-  }
-
-  // Upload profile photo
-  Future<String> uploadProfilePhoto(File imageFile, String userId) async {
-    final storageRef = FirebaseStorage.instance.ref().child('avatars').child('$userId.jpg');
-    final uploadTask = storageRef.putFile(imageFile);
-    final snapshot = await uploadTask;
-    return await snapshot.ref.getDownloadURL();
-  }
-
-  // Upload a journal entry photo. One photo per user per day (deterministic path
-  // so re-uploading replaces the previous image).
-  Future<String> uploadJournalPhoto(File imageFile, String userId, String dateKey) async {
-    final storageRef = FirebaseStorage.instance
-        .ref()
-        .child('journal_photos')
-        .child(userId)
-        .child('$dateKey.jpg');
-    final snapshot = await storageRef.putFile(imageFile);
-    return await snapshot.ref.getDownloadURL();
   }
 
   // Stream user profile for real-time updates

@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../providers/app_provider.dart';
 import '../theme.dart';
 import '../models/models.dart';
+import '../utils/image_helpers.dart';
 import '../widgets/app_page_header.dart';
 
 class FriendsTab extends StatefulWidget {
@@ -220,9 +221,7 @@ class _FriendsTabState extends State<FriendsTab> {
                         CircleAvatar(
                           radius: 24,
                           backgroundColor: AppTheme.borderDefault,
-                          backgroundImage: req.fromAvatarUrl.isNotEmpty
-                              ? NetworkImage(req.fromAvatarUrl)
-                              : null,
+                          backgroundImage: imageProviderFor(req.fromAvatarUrl),
                           child: req.fromAvatarUrl.isEmpty
                               ? const Icon(
                                   Icons.person,
@@ -476,9 +475,9 @@ class _FriendsTabState extends State<FriendsTab> {
                     shape: BoxShape.circle,
                     color: AppTheme.borderDefault,
                     border: Border.all(color: AppTheme.primary, width: 2),
-                    image: friend.avatarUrl.isNotEmpty
+                    image: imageProviderFor(friend.avatarUrl) != null
                         ? DecorationImage(
-                            image: NetworkImage(friend.avatarUrl),
+                            image: imageProviderFor(friend.avatarUrl)!,
                             fit: BoxFit.cover,
                           )
                         : null,
@@ -656,7 +655,10 @@ class _FriendsTabState extends State<FriendsTab> {
           CircleAvatar(
             radius: 20,
             backgroundColor: AppTheme.borderDefault,
-            backgroundImage: NetworkImage(avatarUrl),
+            backgroundImage: imageProviderFor(avatarUrl),
+            child: imageProviderFor(avatarUrl) == null
+                ? const Icon(Icons.person, size: 20, color: AppTheme.outline)
+                : null,
           ),
           const SizedBox(width: 12),
           Expanded(

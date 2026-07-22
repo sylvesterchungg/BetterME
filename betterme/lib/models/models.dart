@@ -7,6 +7,9 @@ class User {
   // The user's real/display name (e.g. "Jane Doe"), shown on their profile.
   // Distinct from [username], which is the unique handle used for friend search.
   String name;
+  // Either an http(s) URL (a Google profile photo) or a base64-encoded image
+  // (uploaded avatars are stored inline in Firestore — the free Spark plan has
+  // no Cloud Storage). Empty = show initials/person-icon default.
   String avatarUrl;
   int streak;
   int waterIntake;
@@ -528,7 +531,10 @@ class LogEntry {
   double previousMoodScore;
   double previousSleepHours;
   bool isSharedWithFriends; // whether this entry is visible to mutual friends
-  String photoUrl; // optional attached photo for the day; empty = none
+  // Optional attached photo for the day; empty = none. Holds a base64-encoded
+  // image, stored inline (no Cloud Storage on the free plan). Legacy entries may
+  // still hold an http Storage URL, which renders via NetworkImage.
+  String photoUrl;
 
   LogEntry({
     this.id = '',

@@ -23,6 +23,32 @@ void main() {
     });
   });
 
+  group('sleepHoursBetween', () {
+    test('overnight sleep wraps past midnight', () {
+      // 23:00 -> 07:00 is 8 hours across midnight.
+      expect(sleepHoursBetween(23, 0, 7, 0), 8.0);
+    });
+
+    test('same-day sleep (both times after midnight)', () {
+      // 01:00 -> 09:00 is 8 hours.
+      expect(sleepHoursBetween(1, 0, 9, 0), 8.0);
+    });
+
+    test('handles fractional minutes', () {
+      // 22:30 -> 06:15 = 7h45m = 7.75h.
+      expect(sleepHoursBetween(22, 30, 6, 15), 7.75);
+    });
+
+    test('a short nap the same evening', () {
+      // 23:00 -> 23:30 = 0.5h.
+      expect(sleepHoursBetween(23, 0, 23, 30), 0.5);
+    });
+
+    test('identical times yield 24h (obvious mis-entry, left as-is)', () {
+      expect(sleepHoursBetween(23, 0, 23, 0), 24.0);
+    });
+  });
+
   group('computeLogStreak', () {
     // Fixed reference "today" so the tests are deterministic.
     final today = DateTime(2026, 7, 22);

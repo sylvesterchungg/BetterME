@@ -23,6 +23,21 @@ double meanIgnoringZero(Iterable<double> values) {
   return count == 0 ? 0.0 : sum / count;
 }
 
+/// Hours of sleep between a bedtime and a wake-up time on a 24-hour clock,
+/// wrapping past midnight. Inputs are clock components (hour 0–23, minute 0–59)
+/// rather than a Flutter TimeOfDay, so this stays pure Dart and unit-testable.
+///
+/// The duration is `wake - bed`; when `wake <= bed` a full day (24h) is added so
+/// an overnight sleep (e.g. 23:00 → 07:00) reads as 8.0 hours. Identical times
+/// therefore yield 24.0 — an obvious mis-entry the user can see and correct.
+double sleepHoursBetween(int bedHour, int bedMinute, int wakeHour, int wakeMinute) {
+  final bed = bedHour * 60 + bedMinute;
+  final wake = wakeHour * 60 + wakeMinute;
+  var diff = wake - bed;
+  if (diff <= 0) diff += 24 * 60;
+  return diff / 60.0;
+}
+
 /// The current daily-log streak: the number of consecutive calendar days that
 /// each have at least one log, ending at today (if there is a log today) or at
 /// yesterday (if there is a log yesterday but not yet today, so the streak

@@ -6,6 +6,7 @@ import '../providers/app_provider.dart';
 import '../models/models.dart';
 import '../services/ai_insight_service.dart';
 import '../theme.dart';
+import '../utils/stats.dart';
 import '../widgets/app_page_header.dart';
 
 class TrendsInsightsScreen extends StatefulWidget {
@@ -682,13 +683,11 @@ class _TrendsInsightsScreenState extends State<TrendsInsightsScreen> {
     final moodVals = dayKeys.map((k) => logByDay[k]?.moodScore ?? 0.0).toList();
     final prodVals = dayKeys.map((k) => recordMap[k]?.completionRate ?? 0.0).toList();
 
-    final sleepNonZero = sleepVals.where((v) => v > 0);
-    final moodNonZero = moodVals.where((v) => v > 0);
-    final prodNonZero = prodVals.where((v) => v > 0);
-
-    final avgSleep = sleepNonZero.isEmpty ? 0.0 : sleepNonZero.reduce((a, b) => a + b) / sleepNonZero.length;
-    final avgMood = moodNonZero.isEmpty ? 0.0 : moodNonZero.reduce((a, b) => a + b) / moodNonZero.length;
-    final avgProd = prodNonZero.isEmpty ? 0.0 : prodNonZero.reduce((a, b) => a + b) / prodNonZero.length;
+    // Same rule as the Profile stats: average only the days that carry real
+    // data (see meanIgnoringZero in utils/stats.dart).
+    final avgSleep = meanIgnoringZero(sleepVals);
+    final avgMood = meanIgnoringZero(moodVals);
+    final avgProd = meanIgnoringZero(prodVals);
 
     String moodStatus;
     if (avgMood == 0) {

@@ -1,12 +1,13 @@
 import 'dart:async';
 import 'dart:io';
-import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:firebase_auth/firebase_auth.dart' as firebase_auth;
 import 'package:google_sign_in/google_sign_in.dart';
 import '../models/models.dart';
 import '../services/database_service.dart';
 import '../services/ai_insight_service.dart';
 import '../services/notification_service.dart';
+import '../utils/stats.dart';
 
 class AppProvider with ChangeNotifier {
   final DatabaseService _dbService = DatabaseService();
@@ -73,6 +74,11 @@ class AppProvider with ChangeNotifier {
   StreamSubscription? _requestsSub;
   StreamSubscription? _notificationsSub;
   StreamSubscription? _privateProfileSub;
+
+  // The friendsIds the friends/friends-logs streams were last built for. The
+  // user doc changes often (streak ticks, mood mirror, water intake), so we
+  // only tear down and rebuild those two streams when friendsIds truly changes.
+  List<String>? _friendsIdsForSubs;
 
 
   AppProvider() {
@@ -180,8 +186,12 @@ class AppProvider with ChangeNotifier {
     _userSub = _dbService.streamUserProfile(userId).listen((user) {
       currentUser = user;
 
-      // Update friends stream if friendIds changed
-      if (user != null) {
+      // Only (re)build the friends streams when friendsIds actually changed —
+      // rebuilding on every user-doc emission churns two Firestore listeners
+      // needlessly (and bills the reads) on every streak/mood/water update.
+      if (user != null && !listEquals(_friendsIdsForSubs, user.friendsIds)) {
+        _friendsIdsForSubs = List<String>.from(user.friendsIds);
+
         _friendsSub?.cancel();
         _friendsSub = _dbService.streamFriends(user.friendsIds).listen((friendList) {
           friends = friendList;
@@ -375,6 +385,8 @@ class AppProvider with ChangeNotifier {
     _requestsSub?.cancel();
     _notificationsSub?.cancel();
     _privateProfileSub?.cancel();
+    // Force the friends streams to rebuild on the next login/user switch.
+    _friendsIdsForSubs = null;
   }
 
   // Detect incomplete tasks past their due date; reset the task streak if found.
@@ -535,37 +547,7 @@ class AppProvider with ChangeNotifier {
   /// today (if logged today) or yesterday (if logged yesterday but not yet
   /// today, so the streak stays alive for the day). Returns 0 when there are no
   /// logs, or when the most recent log is older than yesterday (streak broken).
-  int _computeLogStreak() {
-    if (logs.isEmpty) return 0;
-
-    // Collapse logs to the distinct calendar days they fall on.
-    final loggedDays = <DateTime>{
-      for (final log in logs) DateTime(log.date.year, log.date.month, log.date.day),
-    };
-
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    final yesterday = today.subtract(const Duration(days: 1));
-
-    // Anchor the streak at today if logged today, otherwise yesterday. If the
-    // newest log is older than yesterday, the streak is already broken.
-    DateTime cursor;
-    if (loggedDays.contains(today)) {
-      cursor = today;
-    } else if (loggedDays.contains(yesterday)) {
-      cursor = yesterday;
-    } else {
-      return 0;
-    }
-
-    // Walk backwards day by day for as long as each day has a log.
-    int streak = 0;
-    while (loggedDays.contains(cursor)) {
-      streak++;
-      cursor = cursor.subtract(const Duration(days: 1));
-    }
-    return streak;
-  }
+  int _computeLogStreak() => computeLogStreak(logs.map((l) => l.date));
 
   Future<void> checkAndUpdateStreak() async {
     if (currentUser == null) return;
@@ -905,15 +887,13 @@ class AppProvider with ChangeNotifier {
   // COMPUTED PROPERTIES (Progress Reports)
   // ==========================================
 
-  double get averageMood {
-    if (logs.isEmpty) return 0.0;
-    return logs.map((l) => l.moodScore).reduce((a, b) => a + b) / logs.length;
-  }
+  // Averages exclude "no data" days: because mood and sleep are logged
+  // independently, a mood-only day stores sleepHours == 0 and a sleep-only day
+  // stores moodScore == 0. Counting those zeros would drag the mean down (and
+  // disagree with the Trends screen, which already ignores them).
+  double get averageMood => meanIgnoringZero(logs.map((l) => l.moodScore));
 
-  double get averageSleep {
-    if (logs.isEmpty) return 0.0;
-    return logs.map((l) => l.sleepHours).reduce((a, b) => a + b) / logs.length;
-  }
+  double get averageSleep => meanIgnoringZero(logs.map((l) => l.sleepHours));
 
   double get taskCompletionRate {
     if (tasks.isEmpty) return 0.0;

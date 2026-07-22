@@ -1,0 +1,63 @@
+// Small, pure statistics helpers shared across the app so the same rules are
+// applied everywhere (avoids the Profile vs. Trends averaging drift).
+//
+// These functions are deliberately free of Flutter/Firebase dependencies so
+// they can be unit-tested directly (see test/stats_test.dart).
+
+/// Arithmetic mean of [values], ignoring non-positive entries.
+///
+/// The app lets users log mood and sleep independently, so a mood-only day
+/// stores `sleepHours == 0` and a sleep-only day stores `moodScore == 0`.
+/// Those zeros are "no data", not real measurements, so they must be excluded
+/// from an average — otherwise the mean is dragged toward zero. Returns 0.0
+/// when there is no positive data to average.
+double meanIgnoringZero(Iterable<double> values) {
+  var sum = 0.0;
+  var count = 0;
+  for (final v in values) {
+    if (v > 0) {
+      sum += v;
+      count++;
+    }
+  }
+  return count == 0 ? 0.0 : sum / count;
+}
+
+/// The current daily-log streak: the number of consecutive calendar days that
+/// each have at least one log, ending at today (if there is a log today) or at
+/// yesterday (if there is a log yesterday but not yet today, so the streak
+/// stays alive for the day). Returns 0 when there are no logs, or when the most
+/// recent log is older than yesterday (the streak is already broken).
+///
+/// [today] is injectable so the logic can be tested deterministically; it
+/// defaults to `DateTime.now()`. Only the date component of each input is used.
+int computeLogStreak(Iterable<DateTime> logDates, {DateTime? today}) {
+  // Collapse logs to the distinct calendar days they fall on.
+  final loggedDays = <DateTime>{
+    for (final d in logDates) DateTime(d.year, d.month, d.day),
+  };
+  if (loggedDays.isEmpty) return 0;
+
+  final now = today ?? DateTime.now();
+  final todayDay = DateTime(now.year, now.month, now.day);
+  final yesterday = todayDay.subtract(const Duration(days: 1));
+
+  // Anchor the streak at today if logged today, otherwise yesterday. If the
+  // newest log is older than yesterday, the streak is already broken.
+  DateTime cursor;
+  if (loggedDays.contains(todayDay)) {
+    cursor = todayDay;
+  } else if (loggedDays.contains(yesterday)) {
+    cursor = yesterday;
+  } else {
+    return 0;
+  }
+
+  // Walk backwards day by day for as long as each day has a log.
+  var streak = 0;
+  while (loggedDays.contains(cursor)) {
+    streak++;
+    cursor = cursor.subtract(const Duration(days: 1));
+  }
+  return streak;
+}

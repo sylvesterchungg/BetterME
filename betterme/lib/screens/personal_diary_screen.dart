@@ -63,12 +63,7 @@ class _PersonalDiaryScreenState extends State<PersonalDiaryScreen> {
     final provider = context.watch<AppProvider>();
     final myLogs = List<LogEntry>.from(provider.logs)
       ..sort((a, b) => b.date.compareTo(a.date));
-    // A journal entry is a day with an actual note or photo. Mood/sleep are
-    // captured in the Daily Log tab and don't create a journal card on their own.
-    final filtered = myLogs
-        .where((l) => l.notes.isNotEmpty || l.photoUrl.isNotEmpty)
-        .where(_matchesSearch)
-        .toList();
+    final filtered = myLogs.where(_matchesSearch).toList();
     final friendsLogs = provider.friendsSharedLogs;
 
     return SafeArea(
@@ -496,6 +491,9 @@ class _PersonalDiaryScreenState extends State<PersonalDiaryScreen> {
       dateLabel = DateFormat('EEE, MMM dd, yyyy').format(log.date);
     }
 
+    final hasMood = log.moodScore > 0;
+    final hasSleep = log.sleepHours > 0;
+
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
@@ -511,7 +509,7 @@ class _PersonalDiaryScreenState extends State<PersonalDiaryScreen> {
             padding: const EdgeInsets.fromLTRB(16, 14, 8, 0),
             child: Row(
               children: [
-                const Icon(Icons.article_outlined, color: AppTheme.outline, size: 20),
+                Icon(_moodIcon(log.moodScore), color: _moodColor(log.moodScore), size: 22),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(dateLabel, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: AppTheme.onSurface)),
@@ -535,6 +533,84 @@ class _PersonalDiaryScreenState extends State<PersonalDiaryScreen> {
               ],
             ),
           ),
+
+          // Mood + sleep summary (read-only preview — edit these in the Daily Log tab)
+          if (hasMood || hasSleep)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: Wrap(
+                spacing: 8,
+                runSpacing: 6,
+                children: [
+                  if (hasMood)
+                    _summaryChip(
+                      Icons.mood,
+                      '${log.moodScore.toStringAsFixed(1)} / 10',
+                      _moodColor(log.moodScore).withValues(alpha: 0.12),
+                      _moodColor(log.moodScore),
+                    ),
+                  if (hasSleep) ...[
+                    _summaryChip(
+                      Icons.bedtime_outlined,
+                      '${log.sleepHours.toStringAsFixed(1)}h',
+                      AppTheme.secondaryFixed.withValues(alpha: 0.5),
+                      AppTheme.secondary,
+                    ),
+                    if (log.sleepQuality > 0)
+                      _summaryChip(
+                        Icons.star_outline,
+                        'Quality ${log.sleepQuality}/10',
+                        AppTheme.secondaryFixed.withValues(alpha: 0.3),
+                        AppTheme.secondary,
+                      ),
+                    if (log.hadNightmare)
+                      _summaryChip(
+                        Icons.nightlight_outlined,
+                        'Nightmare',
+                        const Color(0xFFFFDAD6),
+                        AppTheme.error,
+                      ),
+                  ],
+                ],
+              ),
+            ),
+
+          // Emotions
+          if (log.emotions.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Wrap(
+                spacing: 6,
+                runSpacing: 4,
+                children: log.emotions.map((e) => Chip(
+                  label: Text(e, style: const TextStyle(fontSize: 11)),
+                  padding: EdgeInsets.zero,
+                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  backgroundColor: AppTheme.surfaceContainerHighest,
+                  side: BorderSide.none,
+                )).toList(),
+              ),
+            ),
+
+          // Trigger
+          if (log.trigger.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 6, 16, 0),
+              child: Row(
+                children: [
+                  const Icon(Icons.bolt, size: 14, color: AppTheme.outline),
+                  const SizedBox(width: 4),
+                  Expanded(
+                    child: Text(
+                      log.trigger,
+                      style: const TextStyle(fontSize: 12, color: AppTheme.outline),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
+            ),
 
           // Notes
           if (log.notes.isNotEmpty)
@@ -804,6 +880,89 @@ class _EditJournalSheetState extends State<_EditJournalSheet> {
     super.dispose();
   }
 
+  // The day's log (for showing mood/sleep read-only). Uses the passed-in entry
+  // when editing, otherwise finds today's log so "Write about today" can still
+  // show what was already logged in the Daily Log tab.
+  LogEntry? get _dayLog {
+    if (widget.log != null) return widget.log;
+    for (final l in widget.provider.logs) {
+      if (l.date.year == _date.year &&
+          l.date.month == _date.month &&
+          l.date.day == _date.day) {
+        return l;
+      }
+    }
+    return null;
+  }
+
+  // Read-only snapshot of the day's mood/sleep/quality. These are logged and
+  // edited in the Daily Log tab; the journal only displays them.
+  Widget _buildLoggedInfo() {
+    final log = _dayLog;
+    final mood = log?.moodScore ?? 0;
+    final sleep = log?.sleepHours ?? 0;
+    final quality = log?.sleepQuality ?? 0;
+    final hasAny = mood > 0 || sleep > 0 || quality > 0;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: AppTheme.surfaceContainerLow,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppTheme.borderDefault),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.insights_outlined, size: 15, color: AppTheme.outline),
+              const SizedBox(width: 6),
+              const Text('From your Daily Log',
+                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppTheme.onSurfaceVariant)),
+            ],
+          ),
+          const SizedBox(height: 8),
+          if (!hasAny)
+            const Text('No mood or sleep logged for this day yet.',
+                style: TextStyle(fontSize: 12, color: AppTheme.outline))
+          else
+            Wrap(
+              spacing: 8,
+              runSpacing: 6,
+              children: [
+                if (mood > 0) _readOnlyChip(Icons.mood, 'Mood ${mood.toStringAsFixed(1)}/10'),
+                if (sleep > 0) _readOnlyChip(Icons.bedtime_outlined, 'Sleep ${sleep.toStringAsFixed(1)}h'),
+                if (quality > 0) _readOnlyChip(Icons.star_outline, 'Quality $quality/10'),
+              ],
+            ),
+          const SizedBox(height: 6),
+          const Text('Edit these in the Daily Log tab.',
+              style: TextStyle(fontSize: 11, color: AppTheme.outline)),
+        ],
+      ),
+    );
+  }
+
+  Widget _readOnlyChip(IconData icon, String label) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: AppTheme.borderDefault),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 14, color: AppTheme.outline),
+          const SizedBox(width: 5),
+          Text(label, style: const TextStyle(fontSize: 12, color: AppTheme.onSurface)),
+        ],
+      ),
+    );
+  }
+
   Future<void> _save() async {
     if (_saving) return;
     setState(() => _saving = true);
@@ -850,6 +1009,9 @@ class _EditJournalSheetState extends State<_EditJournalSheet> {
                   isEditing ? 'Edit — ${DateFormat('MMM dd, yyyy').format(_date)}' : 'Write about today',
                   style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: AppTheme.onSurface),
                 ),
+                const SizedBox(height: 20),
+
+                _buildLoggedInfo(),
                 const SizedBox(height: 20),
 
                 const Text('Photo', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppTheme.onSurface)),

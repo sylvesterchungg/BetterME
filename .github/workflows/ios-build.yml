@@ -42,6 +42,13 @@ jobs:
       - name: Show Flutter/Dart versions
         run: flutter --version
 
+      # Firebase's Swift Package Manager path breaks on CI runners with an rsync
+      # error copying prebuilt frameworks into build/ios/SourcePackages/.
+      # Force the proven CocoaPods path instead (this is a global flutter setting,
+      # so it must run before pub get / build ios).
+      - name: Use CocoaPods instead of Swift Package Manager
+        run: flutter config --no-enable-swift-package-manager
+
       - name: Install Dart/Flutter dependencies
         run: flutter pub get
 

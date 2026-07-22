@@ -72,18 +72,31 @@ class NotificationService {
     final minute = int.tryParse(parts[1]);
     if (hour == null || minute == null) return;
 
+    // Recurrence: map the task's repeatInterval to the OS repeat rule so the
+    // reminder actually recurs (Daily/Weekly/Monthly). Anything else ('None')
+    // fires exactly once.
+    final match = _matchComponentsFor(task.repeatInterval);
+
     // Build the local DateTime the user intended, convert to UTC, then wrap in
     // a TZDateTime(UTC) so flutter_local_notifications fires at the right wall-
     // clock time without needing flutter_timezone to set tz.local.
-    final localDt = DateTime(
+    var localDt = DateTime(
       task.dueDate!.year,
       task.dueDate!.month,
       task.dueDate!.day,
       hour,
       minute,
     );
-    final scheduledDate = tz.TZDateTime.from(localDt.toUtc(), tz.UTC);
 
+    final now = DateTime.now();
+    if (localDt.isBefore(now)) {
+      // A one-off reminder in the past is pointless; a recurring one just needs
+      // to roll forward to its next occurrence so the OS can start repeating.
+      if (match == null) return;
+      localDt = _rollForward(localDt, task.repeatInterval, now);
+    }
+
+    final scheduledDate = tz.TZDateTime.from(localDt.toUtc(), tz.UTC);
     if (scheduledDate.isBefore(tz.TZDateTime.now(tz.UTC))) return;
 
     try {
@@ -103,12 +116,51 @@ class NotificationService {
           iOS: DarwinNotificationDetails(),
         ),
         androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
-      uiLocalNotificationDateInterpretation:
-          UILocalNotificationDateInterpretation.absoluteTime,
+        uiLocalNotificationDateInterpretation:
+            UILocalNotificationDateInterpretation.absoluteTime,
+        matchDateTimeComponents: match,
       );
     } catch (e) {
       debugPrint('[Notifications] scheduleTaskReminder error: $e');
     }
+  }
+
+  // Maps a task's repeat interval to the recurrence rule the OS applies.
+  // null = fire once (no repeat).
+  static DateTimeComponents? _matchComponentsFor(String repeatInterval) {
+    switch (repeatInterval) {
+      case 'Daily':
+        return DateTimeComponents.time;
+      case 'Weekly':
+        return DateTimeComponents.dayOfWeekAndTime;
+      case 'Monthly':
+        return DateTimeComponents.dayOfMonthAndTime;
+      default:
+        return null;
+    }
+  }
+
+  // Advances [dt] by whole intervals until it is in the future, so a recurring
+  // reminder whose first occurrence already passed still schedules correctly.
+  static DateTime _rollForward(DateTime dt, String interval, DateTime now) {
+    var d = dt;
+    var guard = 0; // safety cap so a bad interval can't loop forever
+    while (d.isBefore(now) && guard < 1000) {
+      switch (interval) {
+        case 'Weekly':
+          d = d.add(const Duration(days: 7));
+          break;
+        case 'Monthly':
+          d = DateTime(d.year, d.month + 1, d.day, d.hour, d.minute);
+          break;
+        case 'Daily':
+        default:
+          d = d.add(const Duration(days: 1));
+          break;
+      }
+      guard++;
+    }
+    return d;
   }
 
   // Cancel a previously scheduled task reminder.

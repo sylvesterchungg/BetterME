@@ -77,6 +77,15 @@ class _DailyLogTabState extends State<DailyLogTab> {
   String _loadedForDate = '';
   double _prevMoodScore = 0.0;
   double _prevSleepHours = 0.0;
+  // Set by any real field edit (see the setState calls below marked with a
+  // matching comment). If the Firestore logs stream is still empty when this
+  // tab first mounts (e.g. IndexedStack mounts every tab right at login,
+  // before the first snapshot arrives) and the user starts filling the form
+  // before that snapshot lands, build()'s auto-load would otherwise overwrite
+  // their in-progress selections with whatever was previously saved. This
+  // flag makes that auto-load a no-op once the user has actually touched
+  // something, instead of just racing on arrival timing.
+  bool _userHasEditedForDate = false;
 
   @override
   void dispose() {
@@ -119,6 +128,7 @@ class _DailyLogTabState extends State<DailyLogTab> {
     setState(() {
       _selectedDate = candidate;
       _loadedForDate = '';
+      _userHasEditedForDate = false;
       _prevMoodScore = 0.0;
       _prevSleepHours = 0.0;
       // Reset form fields to defaults before loading new date
@@ -201,6 +211,14 @@ class _DailyLogTabState extends State<DailyLogTab> {
   Future<void> _saveLog() async {
     final provider = context.read<AppProvider>();
 
+    try {
+      await _doSaveLog(provider);
+    } catch (e) {
+      _showErrorSnackbar();
+    }
+  }
+
+  Future<void> _doSaveLog(AppProvider provider) async {
     if (_logMode == 'mood') {
       final newScore = _moodScore.clamp(1.0, 10.0);
       final prevForDisplay = _prevMoodScore;
@@ -268,6 +286,17 @@ class _DailyLogTabState extends State<DailyLogTab> {
     );
   }
 
+  void _showErrorSnackbar() {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: const Text('Could not save — check your connection and try again.'),
+        backgroundColor: AppTheme.error,
+        action: SnackBarAction(label: 'Retry', textColor: Colors.white, onPressed: _saveLog),
+      ),
+    );
+  }
+
   // ═══════════════════════════════════════════════════════════════════════
   //  BUILD
   // ═══════════════════════════════════════════════════════════════════════
@@ -275,7 +304,9 @@ class _DailyLogTabState extends State<DailyLogTab> {
   @override
   Widget build(BuildContext context) {
     final provider = context.watch<AppProvider>();
-    if (_loadedForDate != _dateKey && provider.logs.isNotEmpty) {
+    if (_loadedForDate != _dateKey &&
+        provider.logs.isNotEmpty &&
+        !_userHasEditedForDate) {
       _loadedForDate = _dateKey;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _loadValuesForDate(provider, _selectedDate);
@@ -449,6 +480,7 @@ class _DailyLogTabState extends State<DailyLogTab> {
     final isSelected = _selectedMoodEmoji == id;
     return GestureDetector(
       onTap: () => setState(() {
+        _userHasEditedForDate = true;
         _selectedMoodEmoji = id;
         _moodScore = defaultScore;
       }),
@@ -506,6 +538,7 @@ class _DailyLogTabState extends State<DailyLogTab> {
           inactiveColor: AppTheme.surfaceContainer,
           onChanged: (value) {
             setState(() {
+              _userHasEditedForDate = true;
               _moodScore = value;
               if (value <= 2.0) {
                 _selectedMoodEmoji = 'awful';
@@ -581,6 +614,7 @@ class _DailyLogTabState extends State<DailyLogTab> {
     final isSelected = _selectedActivities.contains(label);
     return GestureDetector(
       onTap: () => setState(() {
+        _userHasEditedForDate = true;
         if (isSelected) {
           _selectedActivities.remove(label);
           if (isOthers) {
@@ -642,6 +676,7 @@ class _DailyLogTabState extends State<DailyLogTab> {
                 padding: const EdgeInsets.only(right: 10),
                 child: GestureDetector(
                   onTap: () => setState(() {
+                    _userHasEditedForDate = true;
                     if (isSelected) {
                       _selectedSymptoms.remove(s.name);
                     } else {
@@ -728,7 +763,10 @@ class _DailyLogTabState extends State<DailyLogTab> {
         final isActive = i < _symptomSeverity;
         return Expanded(
           child: GestureDetector(
-            onTap: () => setState(() => _symptomSeverity = i + 1),
+            onTap: () => setState(() {
+              _userHasEditedForDate = true;
+              _symptomSeverity = i + 1;
+            }),
             child: Padding(
               padding: EdgeInsets.only(right: i < 4 ? 4 : 0),
               child: AnimatedContainer(
@@ -814,7 +852,10 @@ class _DailyLogTabState extends State<DailyLogTab> {
               divisions: 48,
               activeColor: AppTheme.primary,
               inactiveColor: AppTheme.surfaceContainer,
-              onChanged: (value) => setState(() => _sleepHours = value),
+              onChanged: (value) => setState(() {
+                _userHasEditedForDate = true;
+                _sleepHours = value;
+              }),
             ),
           ),
           const Padding(
@@ -879,6 +920,7 @@ class _DailyLogTabState extends State<DailyLogTab> {
     );
     if (picked == null || !mounted) return;
     setState(() {
+      _userHasEditedForDate = true;
       if (isBedtime) {
         _bedtime = picked;
       } else {
@@ -901,6 +943,7 @@ class _DailyLogTabState extends State<DailyLogTab> {
           return Expanded(
             child: GestureDetector(
               onTap: () => setState(() {
+                _userHasEditedForDate = true;
                 _sleepInputMode = opt.mode;
                 // Entering time mode: make the saved hours match what the
                 // pickers currently show, so the readout and the value agree.
@@ -1020,7 +1063,10 @@ class _DailyLogTabState extends State<DailyLogTab> {
               final isSelected = selectedIdx == i;
               return Expanded(
                 child: GestureDetector(
-                  onTap: () => setState(() => _sleepQuality = (i + 1) * 2),
+                  onTap: () => setState(() {
+                    _userHasEditedForDate = true;
+                    _sleepQuality = (i + 1) * 2;
+                  }),
                   child: AnimatedContainer(
                     duration: const Duration(milliseconds: 200),
                     padding: const EdgeInsets.symmetric(vertical: 10),
@@ -1074,7 +1120,10 @@ class _DailyLogTabState extends State<DailyLogTab> {
   Widget _buildDreamChoice(bool value, IconData icon, String label, Color color) {
     final isSelected = _hadNightmare == value;
     return GestureDetector(
-      onTap: () => setState(() => _hadNightmare = value),
+      onTap: () => setState(() {
+        _userHasEditedForDate = true;
+        _hadNightmare = value;
+      }),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
         padding: const EdgeInsets.symmetric(vertical: 16),

@@ -35,6 +35,11 @@ class _TrendsInsightsScreenState extends State<TrendsInsightsScreen> {
 
   Future<void> _generateInsight(AppProvider provider, List<LogEntry> logs,
       List<ProductivityRecord> records) async {
+    // Hard stop here too, not just at the auto-trigger in build() — the
+    // refresh icon and the "Try again" error-state button both call this
+    // directly, and without this check they'd send data to Gemini even
+    // when the user hasn't consented (or has turned it back off).
+    if (provider.currentUser?.aiInsightsEnabled != true) return;
     if (_loadingAI) return;
     setState(() {
       _loadingAI = true;
@@ -63,6 +68,7 @@ class _TrendsInsightsScreenState extends State<TrendsInsightsScreen> {
 
   Future<void> _generateCoping(
       AppProvider provider, List<LogEntry> logs) async {
+    if (provider.currentUser?.aiInsightsEnabled != true) return;
     if (_loadingCoping) return;
     setState(() => _loadingCoping = true);
     final result = await AIInsightService.generateCoping(logs: logs);
@@ -80,11 +86,16 @@ class _TrendsInsightsScreenState extends State<TrendsInsightsScreen> {
     final logs = appProvider.logs;
     final productivityRecords = appProvider.productivityRecords;
 
+    // Consent gate (FR_1004-equivalent): null (never asked) or false
+    // (declined/turned off) both mean no insight/coping generation, and no
+    // display of anything previously cached, until the user opts in.
+    final aiConsented = appProvider.currentUser?.aiInsightsEnabled == true;
+
     // Decide once per data-signature whether to reuse the cache or regenerate.
     // A changed signature (new data) re-enters even after a prior error, so
     // fresh logs auto-retry; the sync guard below stops same-data error loops.
     final loggedDays = AIInsightService.loggedDaysInWindow(logs);
-    if (loggedDays >= AIInsightService.minDaysForInsight && !_loadingAI) {
+    if (aiConsented && loggedDays >= AIInsightService.minDaysForInsight && !_loadingAI) {
       final currentSig =
           AIInsightService.signatureFor(logs, productivityRecords);
       if (_handledSignature != currentSig) {
@@ -111,7 +122,7 @@ class _TrendsInsightsScreenState extends State<TrendsInsightsScreen> {
     // Coping suggestions: only when rough days (nightmares/symptoms/low mood)
     // cluster in the recent logs. Same cache-or-generate approach as insights.
     final showCoping = AIInsightService.hasRoughCluster(logs);
-    if (showCoping && !_loadingCoping) {
+    if (aiConsented && showCoping && !_loadingCoping) {
       final copingSig = AIInsightService.copingSignatureFor(logs);
       if (_copingHandledSig != copingSig) {
         _copingHandledSig = copingSig;
@@ -174,6 +185,7 @@ class _TrendsInsightsScreenState extends State<TrendsInsightsScreen> {
 
   Widget _buildAIInsightCard(AppProvider provider, List<LogEntry> logs,
       List<ProductivityRecord> records) {
+    final aiConsented = provider.currentUser?.aiInsightsEnabled == true;
     final loggedDays = AIInsightService.loggedDaysInWindow(logs);
     final hasEnoughData = loggedDays >= AIInsightService.minDaysForInsight;
     final remaining = AIInsightService.minDaysForInsight - loggedDays;
@@ -223,7 +235,7 @@ class _TrendsInsightsScreenState extends State<TrendsInsightsScreen> {
                   ),
                 ),
                 const Spacer(),
-                if (hasEnoughData && !_loadingAI)
+                if (aiConsented && hasEnoughData && !_loadingAI)
                   GestureDetector(
                     onTap: () => _generateInsight(provider, logs, records),
                     child: Container(
@@ -238,7 +250,9 @@ class _TrendsInsightsScreenState extends State<TrendsInsightsScreen> {
               ],
             ),
             const SizedBox(height: 16),
-            if (!hasEnoughData)
+            if (!aiConsented)
+              _buildAIConsentPrompt(provider)
+            else if (!hasEnoughData)
               _buildAINotEnough(remaining)
             else if (_loadingAI)
               _buildAILoading()
@@ -251,6 +265,41 @@ class _TrendsInsightsScreenState extends State<TrendsInsightsScreen> {
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildAIConsentPrompt(AppProvider provider) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text('Your BetterME Assistant',
+            style: TextStyle(
+                fontSize: 17, fontWeight: FontWeight.w700, color: _aiInk)),
+        const SizedBox(height: 8),
+        const Text(
+          "Turn on AI Insights to get a personalised, plain-language read of "
+          "your last 7 days. This sends your mood, sleep, symptoms and task "
+          "data to Google's Gemini AI to generate it — you can turn it off "
+          "again anytime in Profile > AI Insights.",
+          style: TextStyle(fontSize: 13, color: _aiBody, height: 1.5),
+        ),
+        const SizedBox(height: 14),
+        GestureDetector(
+          onTap: () => provider.setAiInsightsEnabled(true),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
+            decoration: BoxDecoration(
+              color: _aiTeal,
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: const Text('Turn on AI Insights',
+                style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.white)),
+          ),
+        ),
+      ],
     );
   }
 
@@ -602,7 +651,7 @@ class _TrendsInsightsScreenState extends State<TrendsInsightsScreen> {
               child: const Row(mainAxisSize: MainAxisSize.min, children: [
                 Icon(Icons.spa_outlined, size: 13, color: accent),
                 SizedBox(width: 5),
-                Text('A little support',
+                Text('A little support · AI-generated',
                     style: TextStyle(
                         fontSize: 11,
                         fontWeight: FontWeight.w700,

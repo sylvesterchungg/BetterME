@@ -11,7 +11,7 @@ class AIInsightService {
   static const _placeholderKey = 'YOUR_GEMINI_API_KEY_HERE';
 
   /// Minimum distinct logged days (within the window) needed before we ask
-  /// Gemini for a correlation — mirrors FR_407's graceful missing-data rule.
+  /// Gemini for a correlation — mirrors FR_406's graceful missing-data rule.
   static const int minDaysForInsight = 3;
 
   /// The Gemini model used for every call. `gemini-3.5-flash-lite` is a
@@ -179,7 +179,7 @@ class AIInsightService {
     }
 
     // Build the compact JSON payload described in the proposal. Days with no
-    // data are simply omitted (FR_407) rather than sent as zeros.
+    // data are simply omitted (FR_406) rather than sent as zeros.
     final dataPoints = <Map<String, dynamic>>[];
     for (final d in days) {
       final key = _key(d);

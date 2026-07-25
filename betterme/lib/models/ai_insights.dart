@@ -1,4 +1,4 @@
-/// A short, digestible AI wellness insight (FR_405/FR_406). Cached in Firestore
+/// A short, digestible AI wellness insight (FR_501). Cached in Firestore
 /// so the dashboard loads instantly and Gemini is only called when the user's
 /// recent data actually changes (or the cache is older than a day).
 class AIInsight {

@@ -259,7 +259,25 @@ class _ProfileTabState extends State<ProfileTab> {
         const SizedBox(height: 16),
         _buildNotificationsSection(context, provider),
         const SizedBox(height: 16),
-        _buildSupportSection(),
+        _buildAiSection(provider),
+      ],
+    );
+  }
+
+  Widget _buildAiSection(AppProvider provider) {
+    final user = provider.currentUser!;
+    return _buildCard(
+      title: 'AI Insights',
+      icon: Icons.auto_awesome,
+      children: [
+        _buildSwitchTile(
+          'AI Insights',
+          "Sends your last 7 days of mood, sleep, symptoms and tasks to "
+              "Google's Gemini AI to generate insights, a morning tip, and "
+              "coping suggestions",
+          user.aiInsightsEnabled == true,
+          (v) => provider.setAiInsightsEnabled(v),
+        ),
       ],
     );
   }
@@ -302,37 +320,6 @@ class _ProfileTabState extends State<ProfileTab> {
           user.streakAlertsNotif,
           (v) => provider.updateNotificationPrefs(streakAlertsNotif: v),
         ),
-        const SizedBox(height: 16),
-        Container(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: AppTheme.surfaceContainerLow,
-            borderRadius: BorderRadius.circular(8),
-            border: const Border(
-              left: BorderSide(color: AppTheme.primary, width: 4),
-            ),
-          ),
-          child: const Text(
-            '"You\'ve been most consistent when reminders are set for 8:00 AM."',
-            style: TextStyle(
-              fontSize: 12,
-              fontStyle: FontStyle.italic,
-              color: Color(0xFF2F2EBE),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-
-  Widget _buildSupportSection() {
-    return _buildCard(
-      title: 'Support',
-      icon: Icons.help,
-      children: [
-        _buildListTile('Help Center', Icons.launch),
-        _buildListTile('Contact Us', Icons.mail),
       ],
     );
   }
@@ -487,7 +474,7 @@ class _ProfileTabState extends State<ProfileTab> {
         ),
         const SizedBox(height: 16),
         const Text(
-          'Version 2.4.1 (Stable)',
+          'Version 0.1.0 (Build 1)',
           style: TextStyle(fontSize: 12, color: AppTheme.outline),
         ),
       ],

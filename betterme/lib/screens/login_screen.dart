@@ -227,6 +227,12 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
   }
 
   void _showError(String message) {
+    // Guards every call site at once: AuthGate can swap this screen out from
+    // under an in-flight auth call (e.g. createUserWithEmailAndPassword
+    // succeeds and fires authStateChanges before updateDisplayName finishes
+    // and throws), so `context` may already be unmounted by the time a catch
+    // block here runs.
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
       content: Text(message),
       backgroundColor: AppTheme.error,

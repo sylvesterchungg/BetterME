@@ -179,6 +179,8 @@ class _HealthTasksTabState extends State<HealthTasksTab> {
     int currentGoal,
   ) {
     final goalController = TextEditingController(text: currentGoal.toString());
+    // .then() disposes it once the dialog closes (Save, Cancel, or backdrop
+    // tap all complete this Future) — there's no owning State here to do it.
     showDialog(
       context: context,
       builder: (context) {
@@ -210,7 +212,7 @@ class _HealthTasksTabState extends State<HealthTasksTab> {
           ],
         );
       },
-    );
+    ).then((_) => goalController.dispose());
   }
 
   @override
@@ -731,7 +733,7 @@ class _HealthTasksTabState extends State<HealthTasksTab> {
                 onPressed: () {
                   if (_waterController.text.isNotEmpty) {
                     final val = int.tryParse(_waterController.text);
-                    if (val != null && val > 0) {
+                    if (val != null && val > 0 && val <= 20000) {
                       provider.addWaterIntake(val);
                       _showUndoSnackbar(context, provider, val);
                       _waterController.clear();
@@ -951,6 +953,9 @@ class _AddTaskBottomSheetState extends State<AddTaskBottomSheet> {
   String _selectedCategory = 'Mindfulness';
   String _selectedCategoryIconKey = 'self_improvement';
   DateTime _selectedDate = DateTime.now();
+  // Guards against a fast double-tap on "Create Task" firing addTask() twice
+  // (each call creates a brand-new task document — there's no dedupe).
+  bool _saving = false;
   bool _reminderEnabled = false;
   TimeOfDay _reminderTime = const TimeOfDay(hour: 9, minute: 0);
   String _repeatInterval = 'None';
@@ -1010,7 +1015,8 @@ class _AddTaskBottomSheetState extends State<AddTaskBottomSheet> {
   }
 
   Future<void> _saveTask() async {
-    if (_titleController.text.trim().isEmpty) return;
+    if (_titleController.text.trim().isEmpty || _saving) return;
+    setState(() => _saving = true);
 
     final reminderStr = _reminderEnabled
         ? '${_reminderTime.hour.toString().padLeft(2, '0')}:${_reminderTime.minute.toString().padLeft(2, '0')}'
@@ -1028,19 +1034,41 @@ class _AddTaskBottomSheetState extends State<AddTaskBottomSheet> {
         reminderTime: reminderStr,
         repeatInterval: _repeatInterval,
       );
-      await widget.provider.updateTask(updated);
+      try {
+        await widget.provider.updateTask(updated);
+      } catch (e) {
+        if (mounted) setState(() => _saving = false);
+        _showSaveError();
+        return;
+      }
     } else {
-      await widget.provider.addTask(
-        _titleController.text.trim(),
-        category: _selectedCategory,
-        categoryIconKey: _selectedCategoryIconKey,
-        dueDate: _selectedDate,
-        reminderTime: reminderStr,
-        repeatInterval: _repeatInterval,
-      );
+      try {
+        await widget.provider.addTask(
+          _titleController.text.trim(),
+          category: _selectedCategory,
+          categoryIconKey: _selectedCategoryIconKey,
+          dueDate: _selectedDate,
+          reminderTime: reminderStr,
+          repeatInterval: _repeatInterval,
+        );
+      } catch (e) {
+        if (mounted) setState(() => _saving = false);
+        _showSaveError();
+        return;
+      }
     }
 
     if (mounted) Navigator.pop(context);
+  }
+
+  void _showSaveError() {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Could not save task — check your connection and try again.'),
+        backgroundColor: AppTheme.error,
+      ),
+    );
   }
 
   Future<void> _showNewCategoryDialog() async {
@@ -1060,10 +1088,16 @@ class _AddTaskBottomSheetState extends State<AddTaskBottomSheet> {
 
   Future<void> _pickDueDate() async {
     final now = DateTime.now();
+    final firstDate = DateTime(now.year, now.month, now.day);
+    // Editing an already-overdue task seeds _selectedDate with its past due
+    // date; showDatePicker asserts initialDate can't be before firstDate, so
+    // without this clamp opening the picker on an overdue task crashes.
+    final initial =
+        _selectedDate.isBefore(firstDate) ? firstDate : _selectedDate;
     final date = await showDatePicker(
       context: context,
-      initialDate: _selectedDate,
-      firstDate: DateTime(now.year, now.month, now.day),
+      initialDate: initial,
+      firstDate: firstDate,
       lastDate: now.add(const Duration(days: 365)),
     );
     if (date != null) setState(() => _selectedDate = date);
@@ -1124,7 +1158,7 @@ class _AddTaskBottomSheetState extends State<AddTaskBottomSheet> {
           SizedBox(
             width: double.infinity,
             child: ElevatedButton(
-              onPressed: _saveTask,
+              onPressed: _saving ? null : _saveTask,
               style: ElevatedButton.styleFrom(
                 backgroundColor: AppTheme.primary,
                 foregroundColor: Colors.white,

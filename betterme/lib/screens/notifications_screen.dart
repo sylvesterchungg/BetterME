@@ -27,7 +27,19 @@ class NotificationsScreen extends StatelessWidget {
               TextButton(
                 onPressed: unread == 0
                     ? null
-                    : () => provider.markAllNotificationsRead(),
+                    : () async {
+                        try {
+                          await provider.markAllNotificationsRead();
+                        } catch (e) {
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                  content: Text(
+                                      'Could not mark all as read — try again.')),
+                            );
+                          }
+                        }
+                      },
                 child: Text(
                   unread == 0 ? 'All read' : 'Mark all as read',
                   style: TextStyle(

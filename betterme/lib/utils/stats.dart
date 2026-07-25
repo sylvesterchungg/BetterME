@@ -55,7 +55,7 @@ int computeLogStreak(Iterable<DateTime> logDates, {DateTime? today}) {
 
   final now = today ?? DateTime.now();
   final todayDay = DateTime(now.year, now.month, now.day);
-  final yesterday = todayDay.subtract(const Duration(days: 1));
+  final yesterday = _previousDay(todayDay);
 
   // Anchor the streak at today if logged today, otherwise yesterday. If the
   // newest log is older than yesterday, the streak is already broken.
@@ -72,7 +72,16 @@ int computeLogStreak(Iterable<DateTime> logDates, {DateTime? today}) {
   var streak = 0;
   while (loggedDays.contains(cursor)) {
     streak++;
-    cursor = cursor.subtract(const Duration(days: 1));
+    cursor = _previousDay(cursor);
   }
   return streak;
 }
+
+/// Steps back exactly one calendar day. Deliberately NOT
+/// `d.subtract(const Duration(days: 1))` — that does absolute-time (fixed
+/// 24h) arithmetic on a local DateTime, which lands off local midnight when a
+/// DST transition falls between the two days, breaking the exact-midnight
+/// membership checks above. Reconstructing from calendar components instead
+/// (Dart normalizes an out-of-range day, e.g. day 0 rolls into the previous
+/// month) always lands exactly on the target day's local midnight.
+DateTime _previousDay(DateTime d) => DateTime(d.year, d.month, d.day - 1);

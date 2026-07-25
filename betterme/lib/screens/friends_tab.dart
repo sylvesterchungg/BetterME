@@ -16,10 +16,16 @@ class FriendsTab extends StatefulWidget {
 
 class _FriendsTabState extends State<FriendsTab> {
   final TextEditingController _searchController = TextEditingController();
+  // Guards against a fast double-tap firing two sendFriendRequest() calls —
+  // the duplicate-pending-request check in DatabaseService is a separate
+  // read-then-write, not a transaction, so two near-simultaneous taps could
+  // otherwise both pass the check and create two pending requests.
+  bool _sendingRequest = false;
 
   void _handleSendRequest(AppProvider provider) async {
     final username = _searchController.text.trim();
-    if (username.isEmpty) return;
+    if (username.isEmpty || _sendingRequest) return;
+    setState(() => _sendingRequest = true);
 
     try {
       await provider.sendFriendRequest(username);
@@ -35,8 +41,15 @@ class _FriendsTabState extends State<FriendsTab> {
           SnackBar(content: Text(e.toString().replaceFirst('Exception: ', ''))),
         );
       }
+    } finally {
+      if (mounted) setState(() => _sendingRequest = false);
     }
   }
+
+  // Per-request in-flight guard — a fast double-tap on Accept would otherwise
+  // fire respondToRequest() twice before the request disappears from the
+  // incoming-requests stream, sending the "accepted" notification twice.
+  final Set<String> _respondingIds = {};
 
   Future<void> _handleRespond(
     AppProvider provider,
@@ -44,6 +57,8 @@ class _FriendsTabState extends State<FriendsTab> {
     String fromId,
     bool accept,
   ) async {
+    if (_respondingIds.contains(requestId)) return;
+    setState(() => _respondingIds.add(requestId));
     try {
       await provider.respondToRequest(requestId, fromId, accept);
       if (mounted) {
@@ -61,6 +76,8 @@ class _FriendsTabState extends State<FriendsTab> {
           context,
         ).showSnackBar(SnackBar(content: Text('Error: $e')));
       }
+    } finally {
+      if (mounted) setState(() => _respondingIds.remove(requestId));
     }
   }
 
@@ -142,11 +159,13 @@ class _FriendsTabState extends State<FriendsTab> {
         ),
         const SizedBox(width: 12),
         GestureDetector(
-          onTap: () => _handleSendRequest(provider),
+          onTap: _sendingRequest ? null : () => _handleSendRequest(provider),
           child: Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
-              color: AppTheme.primary,
+              color: _sendingRequest
+                  ? AppTheme.primary.withValues(alpha: 0.5)
+                  : AppTheme.primary,
               borderRadius: BorderRadius.circular(12),
             ),
             child: const Icon(Icons.person_add, color: Colors.white),
@@ -245,19 +264,23 @@ class _FriendsTabState extends State<FriendsTab> {
                         Row(
                           children: [
                             GestureDetector(
-                              onTap: () => _handleRespond(
-                                provider,
-                                req.id,
-                                req.fromId,
-                                true,
-                              ),
+                              onTap: _respondingIds.contains(req.id)
+                                  ? null
+                                  : () => _handleRespond(
+                                        provider,
+                                        req.id,
+                                        req.fromId,
+                                        true,
+                                      ),
                               child: Container(
                                 padding: const EdgeInsets.symmetric(
                                   horizontal: 14,
                                   vertical: 7,
                                 ),
                                 decoration: BoxDecoration(
-                                  color: AppTheme.primary,
+                                  color: _respondingIds.contains(req.id)
+                                      ? AppTheme.primary.withValues(alpha: 0.5)
+                                      : AppTheme.primary,
                                   borderRadius: BorderRadius.circular(8),
                                 ),
                                 child: const Text(
@@ -272,12 +295,14 @@ class _FriendsTabState extends State<FriendsTab> {
                             ),
                             const SizedBox(width: 8),
                             GestureDetector(
-                              onTap: () => _handleRespond(
-                                provider,
-                                req.id,
-                                req.fromId,
-                                false,
-                              ),
+                              onTap: _respondingIds.contains(req.id)
+                                  ? null
+                                  : () => _handleRespond(
+                                        provider,
+                                        req.id,
+                                        req.fromId,
+                                        false,
+                                      ),
                               child: Container(
                                 padding: const EdgeInsets.symmetric(
                                   horizontal: 14,
@@ -475,7 +500,7 @@ class _FriendsTabState extends State<FriendsTab> {
                         shape: BoxShape.circle,
                         border: Border.all(color: Colors.white, width: 2),
                       ),
-                      child: Icon(mood.icon, color: mood.fg, size: 16),
+                      child: Icon(mood.icon, color: mood.fg, size: 26),
                     ),
                   ),
               ],
@@ -592,7 +617,7 @@ class _FriendsTabState extends State<FriendsTab> {
             ],
           ),
           if (log.moodScore > 0 || log.sleepHours > 0) ...[
-            const SizedBox(height: 12),
+            const SizedBox(height: 20),
             Wrap(
               spacing: 8,
               runSpacing: 6,
@@ -696,7 +721,7 @@ class _FriendsTabState extends State<FriendsTab> {
   }
 
   Widget _buildLeaderboardCard(BuildContext context, AppProvider provider) {
-    // Friends-only leaderboard ranked by streak (FR_505 / LeaderboardEntry).
+    // Friends-only leaderboard ranked by streak (FR_604 / LeaderboardEntry).
     // `provider.leaderboard` is already streak-sorted with a username tiebreak.
     final sorted = provider.leaderboard; // current user + friends
     final currentUser = provider.currentUser;

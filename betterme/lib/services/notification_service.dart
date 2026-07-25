@@ -4,8 +4,8 @@ import 'package:timezone/timezone.dart' as tz;
 import 'package:timezone/data/latest.dart' as tz_data;
 import '../models/models.dart';
 
-// Handles OS-level local notifications for task reminders (FR_901) and
-// streak milestone banners (FR_902). In-app Firestore notifications are
+// Handles OS-level local notifications for task reminders (FR_902) and
+// streak milestone banners (FR_804). In-app Firestore notifications are
 // written directly from AppProvider.
 class NotificationService {
   static final FlutterLocalNotificationsPlugin _plugin =
@@ -59,7 +59,7 @@ class NotificationService {
     return false;
   }
 
-  // Schedule an OS alarm for a task's reminder time on its due date (FR_901).
+  // Schedule an OS alarm for a task's reminder time on its due date (FR_902).
   static Future<void> scheduleTaskReminder(Task task) async {
     if (!_initialized) return;
     if (task.reminderTime == null || task.dueDate == null || task.id.isEmpty) {
@@ -174,7 +174,7 @@ class NotificationService {
     }
   }
 
-  // Show an immediate OS banner for a streak milestone (FR_902).
+  // Show an immediate OS banner for a streak milestone (FR_804).
   static Future<void> showStreakMilestone(int streak) async {
     if (!_initialized) return;
     try {

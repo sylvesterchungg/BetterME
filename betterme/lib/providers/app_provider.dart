@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'package:cloud_firestore/cloud_firestore.dart' show FieldValue;
 import 'package:flutter/foundation.dart';
 import 'package:firebase_auth/firebase_auth.dart' as firebase_auth;
 import 'package:google_sign_in/google_sign_in.dart';
@@ -43,7 +44,7 @@ class AppProvider with ChangeNotifier {
   // Friends-only leaderboard: the current user is ranked against the friends
   // they've actually added/accepted — you must be friends to see someone's
   // streak here. Computed from `currentUser` + `friends` (both kept live by
-  // their streams), sorted by streak descending (FR_505 / LeaderboardEntry),
+  // their streams), sorted by streak descending (FR_604 / LeaderboardEntry),
   // with username as a deterministic tie-breaker.
   List<User> get leaderboard {
     final list = <User>[
@@ -209,9 +210,10 @@ class AppProvider with ChangeNotifier {
       notifyListeners();
     }, onError: (e) => debugPrint('[Firestore] user profile stream error: $e'));
 
-    // 2. Listen to User's Tasks — save a productivity snapshot on every emission
-    // including the initial load, so today always has a record even if the user
-    // doesn't toggle any tasks during this session.
+    // 2. Listen to User's Tasks — save a productivity snapshot (scoped to today's
+    // due tasks, see _saveProductivityRecord) on every emission including the
+    // initial load, so today has an up-to-date record as soon as anything about
+    // the task list changes.
     _tasksSub = _dbService.streamTasks(userId).listen((newTasks) {
       tasks = newTasks;
       _saveProductivityRecord(userId);
@@ -250,13 +252,13 @@ class AppProvider with ChangeNotifier {
       notifyListeners();
     }, onError: (e) => debugPrint('[Firestore] productivity stream error: $e'));
 
-    // 6. Listen to Incoming Friend Requests (FR_502 / FR_503)
+    // 6. Listen to Incoming Friend Requests (FR_601 / FR_602)
     _requestsSub = _dbService.streamIncomingRequests(userId).listen((requests) {
       incomingRequests = requests;
       notifyListeners();
     }, onError: (e) => debugPrint('[Firestore] incoming requests stream error: $e'));
 
-    // 7. Listen to In-App Notifications (FR_902, FR_903)
+    // 7. Listen to In-App Notifications (FR_904)
     _notificationsSub =
         _dbService.streamNotifications(userId).listen((notifList) {
       notifications = notifList;
@@ -337,6 +339,9 @@ class AppProvider with ChangeNotifier {
   /// dashboard rebuilds don't refire). Cheap and idempotent to call every build.
   Future<void> ensureMorningNudge({bool force = false}) async {
     if (currentUser == null || morningNudgeLoading) return;
+    // Consent gate (FR_1004-equivalent): null (never asked) or false
+    // (declined/turned off) both mean no data leaves the device.
+    if (currentUser!.aiInsightsEnabled != true) return;
     final latest = _latestRelevantLog();
     final sig = AIInsightService.nudgeSignatureFor(latest, _pendingTasksToday,
         streak: currentUser?.streak);
@@ -410,9 +415,23 @@ class AppProvider with ChangeNotifier {
   }
 
   void _saveProductivityRecord(String userId) {
-    final total = tasks.length;
-    final completed = tasks.where((t) => t.isCompleted).length;
-    final rate = total > 0 ? completed / total : 0.0;
+    // Scoped to tasks actually DUE today, not the user's whole task list —
+    // using the full list here made every day's "daily" record really just
+    // a slow-moving all-time completion rate re-saved under today's date,
+    // which flattens the 14-day trend chart into a lifetime average instead
+    // of a real day-by-day signal (see NFR_007 known gap).
+    final now = DateTime.now();
+    final dueToday = tasks.where((t) =>
+        t.dueDate != null &&
+        t.dueDate!.year == now.year &&
+        t.dueDate!.month == now.month &&
+        t.dueDate!.day == now.day);
+    final total = dueToday.length;
+    // Nothing due today: leave a gap rather than writing a misleading 0% —
+    // the trends chart already renders missing days as "no data".
+    if (total == 0) return;
+    final completed = dueToday.where((t) => t.isCompleted).length;
+    final rate = completed / total;
     final today = User.todayDateString();
     final record = ProductivityRecord(
       userId: userId,
@@ -453,10 +472,18 @@ class AppProvider with ChangeNotifier {
       'phoneNumber': (phoneNumber ?? '').trim(),
       'photo': photo,
     };
-    final credential = await _auth.createUserWithEmailAndPassword(email: email, password: password);
-    if (credential.user != null) {
-      await credential.user!.updateDisplayName(username);
-      // Wait for authStateChanges listener to pick up the new user and create the profile
+    try {
+      final credential = await _auth.createUserWithEmailAndPassword(email: email, password: password);
+      if (credential.user != null) {
+        await credential.user!.updateDisplayName(username);
+        // Wait for authStateChanges listener to pick up the new user and create the profile
+      }
+    } catch (e) {
+      // Registration didn't complete — clear the stash so these extras (name,
+      // phone, birth date, photo) can't leak onto a later, unrelated sign-in
+      // (e.g. the user retries with Google and gets a brand-new profile).
+      _pendingProfileExtras = null;
+      rethrow;
     }
   }
 
@@ -485,7 +512,12 @@ class AppProvider with ChangeNotifier {
   Future<void> updateUsername(String newName) async {
     if (currentUser != null && newName.isNotEmpty) {
       currentUser!.username = newName;
-      await _dbService.saveUserProfile(currentUser!);
+      // Targeted field update, not a full-object saveUserProfile() — the
+      // cached currentUser can be stale on fields another session just
+      // changed (friendsIds via a friend-accept, streak, mood, water); a
+      // full merge:true write of the whole object would silently revert
+      // those concurrent server-side changes back to the stale local value.
+      await _dbService.updateLeaderboardData(currentUser!.id, {'username': newName});
       if (_auth.currentUser != null) {
         await _auth.currentUser!.updateDisplayName(newName);
       }
@@ -495,9 +527,10 @@ class AppProvider with ChangeNotifier {
   /// Update the user's real/display name on the public profile.
   Future<void> updateName(String newName) async {
     if (currentUser == null) return;
-    currentUser!.name = newName.trim();
-    await _dbService.saveUserProfile(currentUser!);
+    final trimmed = newName.trim();
+    currentUser!.name = trimmed;
     notifyListeners();
+    await _dbService.updateLeaderboardData(currentUser!.id, {'name': trimmed});
   }
 
   /// Re-authenticate an email/password user with their current password. Firebase
@@ -567,8 +600,12 @@ class AppProvider with ChangeNotifier {
     if (currentUser == null) return;
     if (!_streakMilestones.contains(streak)) return;
 
-    // OS banner (FR_902)
+    // OS banner (FR_804)
     if (currentUser!.streakAlertsNotif) {
+      // Other notification paths (task/hydration reminders) request OS
+      // permission right before firing; this one didn't, so on a device
+      // that never triggered those paths the banner was silently dropped.
+      await NotificationService.requestPermission();
       await NotificationService.showStreakMilestone(streak);
     }
 
@@ -623,9 +660,15 @@ class AppProvider with ChangeNotifier {
       // Cancel the OS reminder when the task is marked complete
       if (newStatus) await NotificationService.cancelTaskReminder(id);
       // Completing a task advances the task streak; unchecking reverts it.
+      // FieldValue.increment(), not a client-computed absolute value — two
+      // rapid toggles before the profile stream catches up would otherwise
+      // both read the same stale base and lose one of the two updates.
       if (currentUser != null) {
-        final newTaskStreak = (currentUser!.taskStreak + (newStatus ? 1 : -1)).clamp(0, 9999);
-        await _dbService.updateLeaderboardData(currentUser!.id, {'taskStreak': newTaskStreak});
+        final delta = newStatus ? 1 : -1;
+        currentUser!.taskStreak = (currentUser!.taskStreak + delta).clamp(0, 9999);
+        notifyListeners();
+        await _dbService.updateLeaderboardData(
+            currentUser!.id, {'taskStreak': FieldValue.increment(delta)});
       }
     }
   }
@@ -776,12 +819,17 @@ class AppProvider with ChangeNotifier {
 
   Future<void> addWaterIntake(int amount) async {
     if (currentUser == null) return;
+    // Bound the magnitude of a single add/undo so a bad input (or a stray
+    // extra digit) can't push the stored total to an absurd value — this is
+    // a per-call clamp, not a total clamp, because the same-day path uses
+    // FieldValue.increment() and doesn't know the running total client-side.
+    final safeAmount = amount.clamp(-20000, 20000);
     final today = User.todayDateString();
     if (currentUser!.waterIntakeDate != today) {
       // New day — reset to this amount (clamped to 0 for undo on a fresh day)
-      await _dbService.setWaterIntake(currentUser!.id, amount.clamp(0, 99999), today);
+      await _dbService.setWaterIntake(currentUser!.id, safeAmount.clamp(0, 99999), today);
     } else {
-      await _dbService.updateWaterIntake(currentUser!.id, amount, today);
+      await _dbService.updateWaterIntake(currentUser!.id, safeAmount, today);
     }
   }
 
@@ -807,7 +855,7 @@ class AppProvider with ChangeNotifier {
   }
 
   // ==========================================
-  // COMMUNITY METHODS (FR_502 / FR_503)
+  // COMMUNITY METHODS (FR_601 / FR_602)
   // ==========================================
 
   Future<void> sendFriendRequest(String toUsername) async {
@@ -818,7 +866,7 @@ class AppProvider with ChangeNotifier {
   Future<void> respondToRequest(String requestId, String fromId, bool accept) async {
     if (currentUser == null) return;
     await _dbService.respondToFriendRequest(requestId, fromId, currentUser!.id, accept);
-    // FR_903: notify the sender that their request was accepted
+    // FR_602 / FR_904: notify the sender that their request was accepted
     if (accept) {
       await _dbService.addNotification(AppNotification(
         userId: fromId,
@@ -836,6 +884,17 @@ class AppProvider with ChangeNotifier {
 
   Future<void> markNotificationRead(String notifId) async {
     await _dbService.markNotificationRead(notifId);
+  }
+
+  /// FR_1004-equivalent consent gate. `null` = never asked, `false` =
+  /// declined/turned off, `true` = consented — AI insights/coping/morning-nudge
+  /// generation all check this before sending any data to Gemini.
+  Future<void> setAiInsightsEnabled(bool enabled) async {
+    if (currentUser == null) return;
+    currentUser!.aiInsightsEnabled = enabled;
+    notifyListeners();
+    await _dbService.updateLeaderboardData(
+        currentUser!.id, {'aiInsightsEnabled': enabled});
   }
 
   Future<void> markAllNotificationsRead() async {
@@ -879,8 +938,9 @@ class AppProvider with ChangeNotifier {
     final encoded = await fileToBase64(imageFile);
     if (encoded == null) return false;
     currentUser!.avatarUrl = encoded;
-    await _dbService.saveUserProfile(currentUser!);
     notifyListeners();
+    // Targeted field update — see updateUsername() for why not saveUserProfile().
+    await _dbService.updateLeaderboardData(currentUser!.id, {'avatarUrl': encoded});
     return true;
   }
 

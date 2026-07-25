@@ -566,27 +566,38 @@ class DashboardTab extends StatelessWidget {
                 onPressed: () => Navigator.pop(ctx),
                 child: const Text('Cancel')),
             ElevatedButton(
-              onPressed: () {
+              onPressed: () async {
                 final title = controller.text.trim();
                 if (title.isEmpty) return;
                 final rStr = reminderEnabled
                     ? '${reminderTime.hour.toString().padLeft(2, '0')}:${reminderTime.minute.toString().padLeft(2, '0')}'
                     : null;
-                provider.addTask(title,
-                    category: category,
-                    categoryIconKey: categoryIconKey,
-                    dueDate: selectedDate,
-                    reminderTime: rStr);
                 Navigator.pop(ctx);
-                ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Added: $title')));
+                try {
+                  await provider.addTask(title,
+                      category: category,
+                      categoryIconKey: categoryIconKey,
+                      dueDate: selectedDate,
+                      reminderTime: rStr);
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('Added: $title')));
+                  }
+                } catch (e) {
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                        content: Text(
+                            'Could not add task — check your connection and try again.'),
+                        backgroundColor: AppTheme.error));
+                  }
+                }
               },
               child: const Text('Add'),
             ),
           ],
         ),
       ),
-    );
+    ).then((_) => controller.dispose());
   }
 
   // ── Upcoming Reminder ─────────────────────────────────────────────────────
@@ -734,12 +745,25 @@ class _MorningNudgeCard extends StatelessWidget {
                 : Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text('GOOD MORNING',
-                          style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w700,
-                              letterSpacing: 0.6,
-                              color: Color(0xFF6D5DB0))),
+                      Row(
+                        children: const [
+                          Text('GOOD MORNING',
+                              style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w700,
+                                  letterSpacing: 0.6,
+                                  color: Color(0xFF6D5DB0))),
+                          SizedBox(width: 6),
+                          Icon(Icons.auto_awesome, size: 11, color: Color(0xFF8B7CC8)),
+                          SizedBox(width: 2),
+                          Text('AI-GENERATED',
+                              style: TextStyle(
+                                  fontSize: 9,
+                                  fontWeight: FontWeight.w700,
+                                  letterSpacing: 0.4,
+                                  color: Color(0xFF8B7CC8))),
+                        ],
+                      ),
                       const SizedBox(height: 5),
                       Text(nudge!.text,
                           style: const TextStyle(

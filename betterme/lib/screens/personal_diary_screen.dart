@@ -104,7 +104,21 @@ class _PersonalDiaryScreenState extends State<PersonalDiaryScreen> {
           ),
         ),
         floatingActionButton: FloatingActionButton.extended(
-          onPressed: () => _showEditSheet(context, provider),
+          onPressed: () {
+            // Prefill with today's existing entry if one exists — without
+            // this, the sheet always opened blank and saving it overwrote
+            // (erased) any notes/photo already written for today.
+            final now = DateTime.now();
+            final todayLogs = myLogs.where((l) =>
+                l.date.year == now.year &&
+                l.date.month == now.month &&
+                l.date.day == now.day).toList();
+            if (todayLogs.isNotEmpty) {
+              _showEditSheet(context, provider, log: todayLogs.first);
+            } else {
+              _showEditSheet(context, provider, date: now);
+            }
+          },
           backgroundColor: AppTheme.primary,
           foregroundColor: Colors.white,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -964,8 +978,20 @@ class _EditJournalSheetState extends State<_EditJournalSheet> {
       'notes': _notesCtrl.text.trim(),
       'photoUrl': _photoUrl,
     };
-    await widget.provider.saveLogFields(_date, fields);
-    if (mounted) Navigator.of(context).pop();
+    try {
+      await widget.provider.saveLogFields(_date, fields);
+      if (mounted) Navigator.of(context).pop();
+    } catch (e) {
+      if (mounted) {
+        setState(() => _saving = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Could not save — check your connection and try again.'),
+            backgroundColor: AppTheme.error,
+          ),
+        );
+      }
+    }
   }
 
   @override
@@ -1014,6 +1040,11 @@ class _EditJournalSheetState extends State<_EditJournalSheet> {
                 TextField(
                   controller: _notesCtrl,
                   maxLines: 6,
+                  // Bounded so a very long entry plus a near-max-size photo
+                  // can't push the whole log document past Firestore's 1MB
+                  // document limit (the photo alone is already capped, but
+                  // the combined document wasn't).
+                  maxLength: 4000,
                   decoration: const InputDecoration(
                     hintText: 'How was your day?',
                     border: OutlineInputBorder(),

@@ -1,6 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
-// In-app notifications stored in Firestore (FR_902, FR_903)
+// In-app notifications stored in Firestore (FR_904)
 class AppNotification {
   String id;
   String userId;

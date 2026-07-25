@@ -224,7 +224,7 @@ class DatabaseService {
   // ==========================================
 
   // ==========================================
-  // FRIEND REQUEST OPERATIONS (FR_502 / FR_503)
+  // FRIEND REQUEST OPERATIONS (FR_601 / FR_602)
   // ==========================================
 
   // Send a friend request by username; throws descriptive exceptions on failure
@@ -324,7 +324,7 @@ class DatabaseService {
   }
 
   // ==========================================
-  // NOTIFICATION OPERATIONS (FR_902, FR_903)
+  // NOTIFICATION OPERATIONS (FR_904)
   // ==========================================
 
   Future<void> addNotification(AppNotification notif) async {

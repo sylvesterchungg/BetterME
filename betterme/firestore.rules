@@ -88,7 +88,7 @@ service cloud.firestore {
         (resource == null || resource.data.userId == request.auth.uid);
     }
 
-    // ── In-App Notifications (FR_902, FR_903) ─────────────────────────────────
+    // ── In-App Notifications (FR_904) ─────────────────────────────────────────
     // Any authenticated user can create a notification (so accepting a friend
     // request can write a notification for the other party).
     // Only the recipient can read, update (mark as read), or delete.

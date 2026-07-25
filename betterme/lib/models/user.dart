@@ -19,13 +19,17 @@ class User {
   String moodDate; // "YYYY-MM-DD"
   // Task-completion streak (increments per task completed; resets on overdue).
   int taskStreak;
-  // FR_904 — notification preferences
+  // FR_901 — notification preferences
   bool notificationsEnabled; // master switch for task-reminder local notifications
   bool friendActivityNotif;  // in-app friend-accepted notifications
   bool streakAlertsNotif;    // in-app and OS streak milestone notifications
   // Recurring hydration reminder interval in minutes (0 = off). Drives a
   // repeating OS notification scheduled by NotificationService.
   int hydrationReminderMinutes;
+  // Consent gate for sending log data to the third-party Gemini AI service.
+  // null = never asked yet (AI features stay off until answered); false =
+  // declined/turned off; true = consented, AI features active.
+  bool? aiInsightsEnabled;
 
   User({
     required this.id,
@@ -44,6 +48,7 @@ class User {
     this.friendActivityNotif = true,
     this.streakAlertsNotif = true,
     this.hydrationReminderMinutes = 0,
+    this.aiInsightsEnabled,
   });
 
   static String todayDateString() {
@@ -70,6 +75,7 @@ class User {
       'friendActivityNotif': friendActivityNotif,
       'streakAlertsNotif': streakAlertsNotif,
       'hydrationReminderMinutes': hydrationReminderMinutes,
+      'aiInsightsEnabled': aiInsightsEnabled,
     };
   }
 
@@ -103,6 +109,7 @@ class User {
       friendActivityNotif: map['friendActivityNotif'] as bool? ?? true,
       streakAlertsNotif: map['streakAlertsNotif'] as bool? ?? true,
       hydrationReminderMinutes: map['hydrationReminderMinutes'] as int? ?? 0,
+      aiInsightsEnabled: map['aiInsightsEnabled'] as bool?,
     );
   }
 }

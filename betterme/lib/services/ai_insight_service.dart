@@ -15,25 +15,26 @@ class AIInsightService {
   /// Gemini for a correlation — mirrors FR_406's graceful missing-data rule.
   static const int minDaysForInsight = 3;
 
-  /// The model used for every call. Chosen on measured free-tier quota, which
-  /// is the binding constraint for a live demo — not on model quality:
-  ///   gemini-2.5-flash      20 RPD  — unusable; one debug session exhausts it
-  ///   gemini-3(.5)-flash    20 RPD  — same wall
-  ///   gemini-3.5-flash-lite 500 RPD — quota fine, but measured 40-120s latency
-  ///   gemma-4-31b-it     14.4K RPD  — 5-7s latency, 30 RPM
+  /// The model used for every call. Free-tier quota is the binding constraint
+  /// for a live demo, so the choice was made on measured RPD *and* latency:
+  ///   gemini-2.5-flash        20 RPD — unusable; one debug session exhausts it
+  ///   gemini-3 / 3.5-flash    20 RPD — same wall
+  ///   gemini-3.5-flash-lite  500 RPD — quota fine, but measured 40-120s/call
+  ///   gemma-4-31b-it        14.4K RPD — 3.8-4.9s, but weaker schema adherence
+  ///   gemini-3.1-flash-lite  500 RPD — 1.4-1.8s, clean output  <-- chosen
   ///
-  /// Gemma is an open model and honours `responseSchema` less reliably than the
-  /// Gemini models: roughly 1 call in 8 appends a second JSON object after the
-  /// first (hence [firstJsonObject]), and it can echo schema field names into
-  /// the prose (hence the "never name a field" rule in each prompt).
+  /// 500/day is ample here: every feature is cached behind a data signature
+  /// (see [signatureFor], [copingSignatureFor], [nudgeSignatureFor]), so a
+  /// heavy user costs a handful of calls a day. Note the budget is per API
+  /// key, i.e. shared across all installs — fine for a demo, not for scale.
   ///
-  /// Use the 31B, not gemma-4-26b-a4b-it: the 26B misread 80% task completion
-  /// as "0% task completion ... room for improvement" in testing, which is
-  /// exactly the kind of error this app must never show a user.
-  ///
-  /// Gemma on the Gemini API does not accept `systemInstruction`; every call
-  /// here inlines the system prompt into the user turn, so that is a non-issue.
-  static const String _modelName = 'gemma-4-31b-it';
+  /// Gemma 4 was used briefly for its much larger quota and rejected: it
+  /// echoed schema field names into user-facing prose ('detail: Gently
+  /// stretch...', a tip titled ' albums'), roughly 1 nested-schema call in 8
+  /// appended a second JSON object, and gemma-4-26b-a4b-it read 80% task
+  /// completion back as "0% ... room for improvement". [firstJsonObject] and
+  /// the prompt guards were added for Gemma and are kept as cheap insurance.
+  static const String _modelName = 'gemini-3.1-flash-lite';
 
   /// Hard ceiling on any single generation. Without it a slow draw is an
   /// indefinite spinner in the UI; with it, a stall lands in the existing

@@ -3,10 +3,12 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:timezone/timezone.dart' as tz;
 import 'package:timezone/data/latest.dart' as tz_data;
 import '../models/models.dart';
+import '../utils/stats.dart';
 
-// Handles OS-level local notifications for task reminders (FR_902) and
-// streak milestone banners (FR_804). In-app Firestore notifications are
-// written directly from AppProvider.
+// Handles OS-level local notifications for task reminders (FR_902), streak
+// milestone banners (FR_804), hydration reminders (FR_903) and the daily
+// logging reminder (FR_905). In-app Firestore notifications are written
+// directly from AppProvider.
 class NotificationService {
   static final FlutterLocalNotificationsPlugin _plugin =
       FlutterLocalNotificationsPlugin();
@@ -244,10 +246,77 @@ class NotificationService {
     }
   }
 
+  // Schedule the daily logging reminder (FR_905). [minutesFromMidnight] is the
+  // time of day to fire (e.g. 1260 = 21:00); a negative value simply cancels.
+  //
+  // The reminder repeats daily so it keeps firing even if the app is never
+  // reopened — which is the case it exists for. Conditionality is achieved by
+  // *rescheduling*: when the user has already logged today, [skipToday] moves
+  // the first occurrence to tomorrow, so a logged day is never nudged. Callers
+  // re-invoke this whenever the log set changes (see AppProvider).
+  static Future<void> scheduleLogReminder(
+    int minutesFromMidnight, {
+    bool skipToday = false,
+  }) async {
+    if (!_initialized) return;
+    // Clear the previous schedule first so changing the time doesn't leave a
+    // stale reminder firing alongside the new one.
+    await cancelLogReminder();
+    if (minutesFromMidnight < 0) return;
+
+    // Which day the next occurrence lands on is pure date arithmetic, so it
+    // lives in utils/stats.dart and is unit-tested there.
+    final localDt = nextLogReminderOccurrence(
+      minutesFromMidnight,
+      loggedToday: skipToday,
+      now: DateTime.now(),
+    );
+    if (localDt == null) return;
+
+    try {
+      await _plugin.zonedSchedule(
+        _logReminderNotifId,
+        'Log your day',
+        "You haven't logged your mood or sleep today — it only takes a moment.",
+        tz.TZDateTime.from(localDt.toUtc(), tz.UTC),
+        const NotificationDetails(
+          android: AndroidNotificationDetails(
+            'log_reminders',
+            'Daily Log Reminders',
+            channelDescription:
+                'A daily nudge to log your mood and sleep when you have not yet',
+            importance: Importance.high,
+            priority: Priority.high,
+          ),
+          iOS: DarwinNotificationDetails(
+            presentAlert: true, presentBadge: true, presentSound: true),
+        ),
+        androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
+        uiLocalNotificationDateInterpretation:
+            UILocalNotificationDateInterpretation.absoluteTime,
+        matchDateTimeComponents: DateTimeComponents.time,
+      );
+    } catch (e) {
+      debugPrint('[Notifications] scheduleLogReminder error: $e');
+    }
+  }
+
+  // Cancel the daily logging reminder, if one is scheduled.
+  static Future<void> cancelLogReminder() async {
+    if (!_initialized) return;
+    try {
+      await _plugin.cancel(_logReminderNotifId);
+    } catch (e) {
+      debugPrint('[Notifications] cancelLogReminder error: $e');
+    }
+  }
+
   static int _taskNotifId(String taskId) =>
       taskId.hashCode.abs() % 2000000000;
   static int _streakNotifId(int streak) => 90000 + streak;
-  // Fixed id for the single recurring hydration reminder (there is only ever
-  // one at a time). Kept clear of the task/streak id ranges above.
+  // Fixed ids for the single recurring hydration reminder and the single daily
+  // log reminder (there is only ever one of each at a time). Kept clear of the
+  // task/streak id ranges above.
   static const int _hydrationNotifId = 80000;
+  static const int _logReminderNotifId = 80001;
 }

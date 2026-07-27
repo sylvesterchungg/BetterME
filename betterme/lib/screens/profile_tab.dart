@@ -320,7 +320,69 @@ class _ProfileTabState extends State<ProfileTab> {
           user.streakAlertsNotif,
           (v) => provider.updateNotificationPrefs(streakAlertsNotif: v),
         ),
+        _buildLogReminderTile(context, provider),
       ],
+    );
+  }
+
+  // FR_905 — daily logging reminder. The switch turns it off entirely (stored
+  // as -1); tapping the time opens a picker. The reminder is suppressed
+  // automatically on any day that already has a log, so the subtitle says so.
+  Widget _buildLogReminderTile(BuildContext context, AppProvider provider) {
+    final minutes = provider.currentUser?.logReminderMinutes ?? -1;
+    final isOn = minutes >= 0;
+    final time = TimeOfDay(
+      hour: isOn ? minutes ~/ 60 : 21,
+      minute: isOn ? minutes % 60 : 0,
+    );
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Daily Log Reminder',
+                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+                ),
+                Text(
+                  isOn ? 'Only on days you have not logged yet' : 'Off',
+                  style: const TextStyle(fontSize: 12, color: AppTheme.outline),
+                ),
+              ],
+            ),
+          ),
+          if (isOn)
+            TextButton(
+              onPressed: () async {
+                final picked =
+                    await showTimePicker(context: context, initialTime: time);
+                if (picked != null) {
+                  await provider
+                      .setLogReminder(picked.hour * 60 + picked.minute);
+                }
+              },
+              child: Text(
+                time.format(context),
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: AppTheme.primary,
+                ),
+              ),
+            ),
+          Switch(
+            value: isOn,
+            onChanged: (v) => provider
+                .setLogReminder(v ? (time.hour * 60 + time.minute) : -1),
+            activeThumbColor: AppTheme.primary,
+          ),
+        ],
+      ),
     );
   }
 

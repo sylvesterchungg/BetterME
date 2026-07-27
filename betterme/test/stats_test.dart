@@ -90,4 +90,61 @@ void main() {
       expect(computeLogStreak(logs, today: today), 2);
     });
   });
+
+
+  group('nextLogReminderOccurrence (FR_905)', () {
+    // 21:00 reminder, "now" is mid-afternoon on 15 Mar 2026.
+    final now = DateTime(2026, 3, 15, 14, 30);
+    const at2100 = 21 * 60;
+
+    test('fires today when not yet logged and the time is still ahead', () {
+      expect(
+        nextLogReminderOccurrence(at2100, loggedToday: false, now: now),
+        DateTime(2026, 3, 15, 21, 0),
+      );
+    });
+
+    test('skips to tomorrow when today has already been logged', () {
+      expect(
+        nextLogReminderOccurrence(at2100, loggedToday: true, now: now),
+        DateTime(2026, 3, 16, 21, 0),
+      );
+    });
+
+    test('skips to tomorrow when the time has already passed today', () {
+      final late = DateTime(2026, 3, 15, 22, 15);
+      expect(
+        nextLogReminderOccurrence(at2100, loggedToday: false, now: late),
+        DateTime(2026, 3, 16, 21, 0),
+      );
+    });
+
+    test('a reminder due exactly now rolls to tomorrow, never fires instantly', () {
+      final exactly = DateTime(2026, 3, 15, 21, 0);
+      expect(
+        nextLogReminderOccurrence(at2100, loggedToday: false, now: exactly),
+        DateTime(2026, 3, 16, 21, 0),
+      );
+    });
+
+    test('rolls across a month boundary', () {
+      final endOfMonth = DateTime(2026, 3, 31, 23, 0);
+      expect(
+        nextLogReminderOccurrence(at2100, loggedToday: false, now: endOfMonth),
+        DateTime(2026, 4, 1, 21, 0),
+      );
+    });
+
+    test('returns null when disabled (-1) or out of range', () {
+      expect(nextLogReminderOccurrence(-1, loggedToday: false, now: now), isNull);
+      expect(nextLogReminderOccurrence(1440, loggedToday: false, now: now), isNull);
+    });
+
+    test('midnight (0) is a valid time, not treated as disabled', () {
+      expect(
+        nextLogReminderOccurrence(0, loggedToday: false, now: now),
+        DateTime(2026, 3, 16, 0, 0),
+      );
+    });
+  });
 }

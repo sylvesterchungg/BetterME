@@ -658,8 +658,8 @@ class _FriendsTabState extends State<FriendsTab> {
               child: storedImage(
                 log.photoUrl,
                 width: double.infinity,
-                height: 180,
-                fit: BoxFit.cover,
+                maxHeight: 300,
+                fit: BoxFit.contain,
                 fallback: Container(
                   height: 180,
                   color: AppTheme.surfaceContainer,

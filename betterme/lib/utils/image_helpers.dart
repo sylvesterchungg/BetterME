@@ -41,21 +41,34 @@ ImageProvider? imageProviderFor(String value) {
 /// A drop-in replacement for `Image.network(value, …)` that also renders base64
 /// values. Shows [fallback] (or nothing) when the value is empty/undecodable or
 /// fails to load.
+///
+/// Pass [height] for a box of a known size — right for avatars, where cropping
+/// to a circle is the point. For photos whose shape isn't known in advance
+/// (journal entries), leave [height] null and pass [maxHeight] with
+/// `fit: BoxFit.contain` instead: the image then keeps its own aspect ratio,
+/// growing only as tall as it needs up to that ceiling, so a portrait photo
+/// isn't cropped top and bottom.
 Widget storedImage(
   String value, {
   double? width,
   double? height,
+  double? maxHeight,
   BoxFit fit = BoxFit.cover,
   Widget? fallback,
 }) {
   final provider = imageProviderFor(value);
   final fb = fallback ?? const SizedBox.shrink();
   if (provider == null) return fb;
-  return Image(
+  final image = Image(
     image: provider,
     width: width,
     height: height,
     fit: fit,
     errorBuilder: (_, _, _) => fb,
+  );
+  if (maxHeight == null) return image;
+  return ConstrainedBox(
+    constraints: BoxConstraints(maxHeight: maxHeight),
+    child: image,
   );
 }

@@ -47,4 +47,5 @@ app.*.map.json
 betterme/lib/config/api_keys.dart
 docs/superpowers/specs/2026-07-22-sleep-time-input-design.md
 betterme/docs
-.claude/launch.json
+.claude/*
+CLAUDE.md

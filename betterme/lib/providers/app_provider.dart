@@ -179,6 +179,10 @@ class AppProvider with ChangeNotifier {
     if (profile.hydrationReminderMinutes > 0) {
       NotificationService.scheduleHydrationReminder(profile.hydrationReminderMinutes);
     }
+    // Same for the daily logging reminder (FR_905). The logs stream refines this
+    // as soon as it emits — this call just makes sure a reminder exists even if
+    // that stream is slow or errors.
+    _syncLogReminder();
   }
 
   // Initialize listeners for logged-in user
@@ -234,6 +238,9 @@ class AppProvider with ChangeNotifier {
       logs = newLogs;
       notifyListeners();
       checkAndUpdateStreak();
+      // Re-arm the daily logging reminder against the new log set, so logging
+      // today immediately pushes tonight's nudge out to tomorrow (FR_905).
+      _syncLogReminder();
     }, onError: (e) => debugPrint('[Firestore] logs stream error: $e'));
 
     // 4. Leaderboard is friends-only and derived from `currentUser` + `friends`
@@ -852,6 +859,43 @@ class AppProvider with ChangeNotifier {
       await NotificationService.requestPermission();
     }
     await NotificationService.scheduleHydrationReminder(minutes);
+  }
+
+  // True when today already has a log entry. Drives the FR_905 reminder, which
+  // exists to reach users who have *not* logged.
+  bool get hasLoggedToday {
+    final now = DateTime.now();
+    return logs.any((l) =>
+        l.date.year == now.year &&
+        l.date.month == now.month &&
+        l.date.day == now.day);
+  }
+
+  // (Re)arm the daily logging reminder against current state. Called on login,
+  // on every logs-stream emission, and when the user changes the time — so the
+  // schedule always reflects whether today has been logged.
+  void _syncLogReminder() {
+    final minutes = currentUser?.logReminderMinutes ?? -1;
+    if (minutes < 0) {
+      NotificationService.cancelLogReminder();
+      return;
+    }
+    NotificationService.scheduleLogReminder(minutes, skipToday: hasLoggedToday);
+  }
+
+  // Set the daily logging-reminder time (minutes from midnight; -1 = off).
+  // Persists the choice, requests OS permission when enabling, and re-arms the
+  // local notification (FR_905).
+  Future<void> setLogReminder(int minutesFromMidnight) async {
+    if (currentUser == null) return;
+    currentUser!.logReminderMinutes = minutesFromMidnight;
+    notifyListeners();
+    await _dbService.updateLeaderboardData(
+        currentUser!.id, {'logReminderMinutes': minutesFromMidnight});
+    if (minutesFromMidnight >= 0) {
+      await NotificationService.requestPermission();
+    }
+    _syncLogReminder();
   }
 
   // ==========================================

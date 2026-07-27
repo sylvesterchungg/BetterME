@@ -85,3 +85,29 @@ int computeLogStreak(Iterable<DateTime> logDates, {DateTime? today}) {
 /// (Dart normalizes an out-of-range day, e.g. day 0 rolls into the previous
 /// month) always lands exactly on the target day's local midnight.
 DateTime _previousDay(DateTime d) => DateTime(d.year, d.month, d.day - 1);
+
+/// The wall-clock instant at which the daily logging reminder (FR_905) should
+/// next fire, or null when the reminder is off / the time is out of range.
+///
+/// [minutesFromMidnight] is the user's configured time (1260 = 21:00). The
+/// occurrence is pushed to tomorrow in two cases: when today already has a log
+/// entry ([loggedToday]) — the reminder exists only to reach users who have not
+/// logged — and when today's time has already passed, since a notification
+/// scheduled in the past fires immediately and would nag a user who has just
+/// opened the app.
+DateTime? nextLogReminderOccurrence(
+  int minutesFromMidnight, {
+  required bool loggedToday,
+  required DateTime now,
+}) {
+  if (minutesFromMidnight < 0 || minutesFromMidnight > 1439) return null;
+
+  final at = DateTime(now.year, now.month, now.day, minutesFromMidnight ~/ 60,
+      minutesFromMidnight % 60);
+  if (loggedToday || !at.isAfter(now)) {
+    // Calendar-component arithmetic rather than Duration, for the same
+    // DST-safety reason documented on _previousDay above.
+    return DateTime(at.year, at.month, at.day + 1, at.hour, at.minute);
+  }
+  return at;
+}

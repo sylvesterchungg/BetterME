@@ -26,6 +26,10 @@ class User {
   // Recurring hydration reminder interval in minutes (0 = off). Drives a
   // repeating OS notification scheduled by NotificationService.
   int hydrationReminderMinutes;
+  // FR_905 — daily logging reminder, stored as minutes from midnight
+  // (e.g. 1260 = 21:00). -1 = off. The reminder is suppressed on any day that
+  // already has a log entry; see AppProvider._syncLogReminder.
+  int logReminderMinutes;
   // Consent gate for sending log data to the third-party Gemini AI service.
   // null = never asked yet (AI features stay off until answered); false =
   // declined/turned off; true = consented, AI features active.
@@ -48,6 +52,7 @@ class User {
     this.friendActivityNotif = true,
     this.streakAlertsNotif = true,
     this.hydrationReminderMinutes = 0,
+    this.logReminderMinutes = 1260, // 21:00
     this.aiInsightsEnabled,
   });
 
@@ -75,6 +80,7 @@ class User {
       'friendActivityNotif': friendActivityNotif,
       'streakAlertsNotif': streakAlertsNotif,
       'hydrationReminderMinutes': hydrationReminderMinutes,
+      'logReminderMinutes': logReminderMinutes,
       'aiInsightsEnabled': aiInsightsEnabled,
     };
   }
@@ -109,6 +115,7 @@ class User {
       friendActivityNotif: map['friendActivityNotif'] as bool? ?? true,
       streakAlertsNotif: map['streakAlertsNotif'] as bool? ?? true,
       hydrationReminderMinutes: map['hydrationReminderMinutes'] as int? ?? 0,
+      logReminderMinutes: map['logReminderMinutes'] as int? ?? 1260,
       aiInsightsEnabled: map['aiInsightsEnabled'] as bool?,
     );
   }

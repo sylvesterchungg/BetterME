@@ -647,8 +647,8 @@ class _PersonalDiaryScreenState extends State<PersonalDiaryScreen> {
                 child: storedImage(
                   log.photoUrl,
                   width: double.infinity,
-                  height: 180,
-                  fit: BoxFit.cover,
+                  maxHeight: 320,
+                  fit: BoxFit.contain,
                   fallback: Container(
                     height: 180,
                     color: AppTheme.surfaceContainer,
@@ -773,8 +773,8 @@ class _PersonalDiaryScreenState extends State<PersonalDiaryScreen> {
               child: storedImage(
                 log.photoUrl,
                 width: double.infinity,
-                height: 160,
-                fit: BoxFit.cover,
+                maxHeight: 300,
+                fit: BoxFit.contain,
                 fallback: Container(
                   height: 160,
                   color: AppTheme.surfaceContainer,
@@ -1141,8 +1141,8 @@ class _EditJournalSheetState extends State<_EditJournalSheet> {
           child: storedImage(
             _photoUrl,
             width: double.infinity,
-            height: 180,
-            fit: BoxFit.cover,
+            maxHeight: 320,
+            fit: BoxFit.contain,
             fallback: Container(
               height: 180,
               color: AppTheme.surfaceContainer,

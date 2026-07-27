@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:intl/intl.dart';
@@ -14,25 +15,40 @@ class AIInsightService {
   /// Gemini for a correlation — mirrors FR_406's graceful missing-data rule.
   static const int minDaysForInsight = 3;
 
-  /// The Gemini model used for every call. `gemini-3.5-flash-lite` is a
-  /// lite-tier model: the highest free-tier daily request quota (~1,000/day vs
-  /// 250 for gemini-2.5-flash), faster, and non-thinking (no truncation risk).
-  /// Swap to 'gemini-2.5-flash' for maximum quality on the final demo.
-  static const String _modelName = 'gemini-3.5-flash-lite';
+  /// The model used for every call. Chosen on measured free-tier quota, which
+  /// is the binding constraint for a live demo — not on model quality:
+  ///   gemini-2.5-flash      20 RPD  — unusable; one debug session exhausts it
+  ///   gemini-3(.5)-flash    20 RPD  — same wall
+  ///   gemini-3.5-flash-lite 500 RPD — quota fine, but measured 40-120s latency
+  ///   gemma-4-31b-it     14.4K RPD  — 5-7s latency, 30 RPM
+  ///
+  /// Gemma is an open model and honours `responseSchema` less reliably than the
+  /// Gemini models: roughly 1 call in 8 appends a second JSON object after the
+  /// first (hence [firstJsonObject]), and it can echo schema field names into
+  /// the prose (hence the "never name a field" rule in each prompt).
+  ///
+  /// Use the 31B, not gemma-4-26b-a4b-it: the 26B misread 80% task completion
+  /// as "0% task completion ... room for improvement" in testing, which is
+  /// exactly the kind of error this app must never show a user.
+  ///
+  /// Gemma on the Gemini API does not accept `systemInstruction`; every call
+  /// here inlines the system prompt into the user turn, so that is a non-issue.
+  static const String _modelName = 'gemma-4-31b-it';
+
+  /// Hard ceiling on any single generation. Without it a slow draw is an
+  /// indefinite spinner in the UI; with it, a stall lands in the existing
+  /// catch block and degrades to the same null path as any other failure.
+  static const Duration _callTimeout = Duration(seconds: 20);
 
   static final _model = GenerativeModel(
     model: _modelName,
     apiKey: ApiKeys.geminiApiKey,
     generationConfig: GenerationConfig(
       temperature: 0.6,
-      // gemini-2.5-flash is a *thinking* model: it spends output tokens on
-      // internal reasoning before the answer. The budget must cover thinking
-      // PLUS the JSON, or the response truncates mid-string to invalid JSON
-      // (FormatException: Unterminated string). Thinking here can run into the
-      // thousands, so 2048 was too tight; 8192 leaves ample room. The JSON
-      // itself is tiny (4 short fields), so the extra budget is only consumed
-      // if reasoning actually needs it. (The 0.4.7 package can't set
-      // thinkingBudget:0, which would otherwise disable thinking entirely.)
+      // Gemma is not a thinking model, so the JSON (4 short fields) is all this
+      // budget has to cover. Kept generous anyway: a truncated response is an
+      // unterminated string, and [firstJsonObject] discards those outright
+      // rather than surfacing half an insight. Ceiling is 32768 for this model.
       maxOutputTokens: 8192,
       // Force a strict, parseable JSON shape so the UI never has to guess.
       responseMimeType: 'application/json',
@@ -236,6 +252,8 @@ How to write (this matters a lot):
 - If bad-sleep or low-mood days line up with logged symptoms (headache, tired, a nightmare), you may note it gently — but still steer toward the hopeful "more sleep helps" message.
 - If the week is short or noisy, you can still lean on the general truth that better sleep usually helps mood and getting things done — but NEVER invent numbers they don't have.
 - Be kind and encouraging. Never guilt-trip. No medical claims or diagnoses.
+- Every field holds ordinary prose the user will read as-is. NEVER write a field name ("correlation_type", "headline_insight", "detailed_breakdown", "actionable_nudge") inside the text itself, and never prefix a value with its own label.
+- Only state numbers that appear in the data below. Never restate one of their figures as a different number.
 
 Scales: "mood" and "sleep_quality" are 0-10, "sleep_hrs" is hours, "task_completion_pct" is 0-100. "current_streak_days" is how many days their logging streak is at right now. "symptoms" is how they felt, "activities" is what they did.
 
@@ -250,11 +268,9 @@ Data:''';
     try {
       final response = await _model.generateContent([
         Content.text('$systemPrompt\n$payload'),
-      ]);
-      final text = response.text;
-      if (text == null || text.trim().isEmpty) return null;
-      final decoded = jsonDecode(text);
-      if (decoded is! Map<String, dynamic>) return null;
+      ]).timeout(_callTimeout);
+      final decoded = _decodeJson(response.text, 'AIInsight');
+      if (decoded == null) return null;
       final insight = AIInsight.fromJson(decoded);
       if (insight.isEmpty) return null;
       // Stamp with the data fingerprint + time so it can be cached and reused.
@@ -350,6 +366,7 @@ Rules:
 - Tailor the tips to what they actually logged. If nightmares show up, suggest calming pre-sleep ideas. If it's anxiety, suggest grounding/breathing. Headache/fatigue -> rest, hydration, screen breaks. Match the tips to their signals.
 - Keep each tip short, specific and doable today. 2-3 tips only.
 - If things sound genuinely heavy, you may gently suggest talking to someone they trust — but keep it light and optional, never alarming.
+- Every field holds ordinary prose the user will read as-is. NEVER write a field name ("intro", "tips", "title", "detail") inside the text itself, and never prefix a value with its own label. A title is a short plain phrase like "Wind-down ritual".
 
 Fill the fields:
 - intro: one warm sentence letting them know it's okay and you've noticed.
@@ -360,11 +377,9 @@ What they logged recently:''';
     try {
       final response = await _copingModel.generateContent([
         Content.text('$systemPrompt\n$payload'),
-      ]);
-      final text = response.text;
-      if (text == null || text.trim().isEmpty) return null;
-      final decoded = jsonDecode(text);
-      if (decoded is! Map<String, dynamic>) return null;
+      ]).timeout(_callTimeout);
+      final decoded = _decodeJson(response.text, 'AICoping');
+      if (decoded == null) return null;
       final coping = AICopingTips.fromJson(decoded);
       if (coping.isEmpty) return null;
       return coping.copyWith(
@@ -385,8 +400,7 @@ What they logged recently:''';
     apiKey: ApiKeys.geminiApiKey,
     generationConfig: GenerationConfig(
       temperature: 0.7,
-      // gemini-2.5-flash is a thinking model — leave headroom so reasoning
-      // never truncates the (tiny) JSON. Matches the coping/insight budget.
+      // Headroom against truncation; matches the coping/insight budget.
       maxOutputTokens: 8192,
       responseMimeType: 'application/json',
       responseSchema: Schema.object(
@@ -403,16 +417,21 @@ What they logged recently:''';
   );
 
   /// Fingerprint for the morning nudge: today's date + last night's log +
-  /// today's task load + streak. Flips when a new day starts or inputs change,
-  /// so a cached nudge is reused until something meaningful is different.
-  static String nudgeSignatureFor(LogEntry? latest, int pendingTasks,
-      {int? streak}) {
+  /// streak. Flips when a new day starts or last night's log changes, so a
+  /// cached nudge is reused until something meaningful is different.
+  ///
+  /// Deliberately EXCLUDES the pending-task count. The count is still sent to
+  /// the model for colour, but ticking a checkbox must not invalidate the
+  /// cache: it is a *morning* greeting, and regenerating it mid-afternoon on
+  /// every completion is both odd behaviour and the app's largest source of
+  /// API calls (a user with 8 tasks burned ~8 extra calls a day).
+  static String nudgeSignatureFor(LogEntry? latest, {int? streak}) {
     final today = _key(DateTime.now());
-    if (latest == null) return '$today|nolog|$pendingTasks|${streak ?? 0}';
+    if (latest == null) return '$today|nolog|${streak ?? 0}';
     return '$today|${_key(latest.date)}|${latest.sleepHours}'
         '|${latest.sleepQuality}|${latest.moodScore}|${latest.hadNightmare}'
         '|${(latest.emotions.toList()..sort()).join(",")}'
-        '|$pendingTasks|${streak ?? 0}';
+        '|${streak ?? 0}';
   }
 
   /// One-line personalized morning nudge, or null on failure / no recent data.
@@ -445,22 +464,86 @@ What they logged recently:''';
         '''You are a warm morning wellness buddy in the BetterME app.
 Greet the user briefly and give ONE short, friendly, practical tip for TODAY based on how they slept and felt last night and how many tasks they have.
 Rules: exactly one sentence, max 25 words. Everyday words, no stats or jargon. Kind and encouraging, never guilt. If they slept little or had a nightmare, be gentle and suggest easing in. If they slept well, be upbeat. Mention water, rest, or pacing when it fits.
+The "nudge" field holds ordinary prose the user reads as-is — never write the word "nudge" in it, and never prefix it with a label.
 Their morning so far: ${ctx.toString()}''';
 
     try {
-      final response = await _nudgeModel.generateContent([Content.text(prompt)]);
-      final text = response.text;
-      if (text == null || text.trim().isEmpty) return null;
-      final decoded = jsonDecode(text);
-      if (decoded is! Map<String, dynamic>) return null;
+      final response = await _nudgeModel
+          .generateContent([Content.text(prompt)]).timeout(_callTimeout);
+      final decoded = _decodeJson(response.text, 'MorningNudge');
+      if (decoded == null) return null;
       final nudge = MorningNudge.fromJson(decoded);
       if (nudge.isEmpty) return null;
       return nudge.copyWith(
-        signature: nudgeSignatureFor(latest, pendingTasks, streak: streak),
+        signature: nudgeSignatureFor(latest, streak: streak),
         generatedAt: DateTime.now(),
       );
     } catch (e) {
       debugPrint('[MorningNudge] error: $e');
+      return null;
+    }
+  }
+
+  // ─────────────────────────── RESPONSE PARSING ───────────────────────────
+
+  /// Returns the first complete JSON object in [raw], or null if there isn't
+  /// one. Gemma sometimes emits a valid object followed by a second object or
+  /// stray prose, which makes a plain [jsonDecode] throw "Extra data".
+  ///
+  /// Note this deliberately does NOT use the common `indexOf('{')` ..
+  /// `lastIndexOf('}')` slice: when the trailing junk is itself a JSON object,
+  /// `lastIndexOf` reaches into it and the slice spans both objects, throwing
+  /// the very same "Extra data" error. Scanning forward on brace depth (while
+  /// skipping braces inside string literals) takes only the first value.
+  ///
+  /// A response truncated mid-object returns null rather than a partial slice —
+  /// half an insight is worse than none.
+  @visibleForTesting
+  static String? firstJsonObject(String raw) {
+    final start = raw.indexOf('{');
+    if (start == -1) return null;
+    var depth = 0;
+    var inString = false;
+    var escaped = false;
+    for (var i = start; i < raw.length; i++) {
+      final c = raw[i];
+      if (inString) {
+        if (escaped) {
+          escaped = false;
+        } else if (c == r'\') {
+          escaped = true;
+        } else if (c == '"') {
+          inString = false;
+        }
+        continue;
+      }
+      if (c == '"') {
+        inString = true;
+      } else if (c == '{') {
+        depth++;
+      } else if (c == '}') {
+        depth--;
+        if (depth == 0) return raw.substring(start, i + 1);
+      }
+    }
+    return null;
+  }
+
+  /// Shared decode path for all three call sites. Returns null (never throws)
+  /// so every failure mode collapses into the same graceful empty state.
+  static Map<String, dynamic>? _decodeJson(String? text, String tag) {
+    if (text == null || text.trim().isEmpty) return null;
+    final slice = firstJsonObject(text);
+    if (slice == null) {
+      debugPrint('[$tag] no complete JSON object in response');
+      return null;
+    }
+    try {
+      final decoded = jsonDecode(slice);
+      if (decoded is! Map<String, dynamic>) return null;
+      return decoded;
+    } on FormatException catch (e) {
+      debugPrint('[$tag] JSON parse failed: $e');
       return null;
     }
   }

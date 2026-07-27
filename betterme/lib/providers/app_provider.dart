@@ -350,8 +350,8 @@ class AppProvider with ChangeNotifier {
     // (declined/turned off) both mean no data leaves the device.
     if (currentUser!.aiInsightsEnabled != true) return;
     final latest = _latestRelevantLog();
-    final sig = AIInsightService.nudgeSignatureFor(latest, _pendingTasksToday,
-        streak: currentUser?.streak);
+    final sig =
+        AIInsightService.nudgeSignatureFor(latest, streak: currentUser?.streak);
     if (!force) {
       if (_nudgeHandledSignature == sig) return;
       final cached = morningNudge;

@@ -216,10 +216,17 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
       await context.read<AppProvider>().sendPasswordResetEmail(email);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Password reset email sent. Check your inbox.')),
+          const SnackBar(
+            // Firebase's default sender (noreply@<project>.firebaseapp.com) is
+            // very often filtered as spam, so say so up front -- otherwise a
+            // working reset looks broken to the user.
+            content: Text('Password reset email sent. Check your inbox — and your spam/junk folder.'),
+            duration: Duration(seconds: 6),
+          ),
         );
       }
     } catch (e) {
+      debugPrint('Password reset error: $e');
       _showError('Could not send reset email. Check the address and try again.');
     } finally {
       if (mounted) setState(() => _isLoading = false);

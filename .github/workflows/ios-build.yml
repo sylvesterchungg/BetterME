@@ -5,17 +5,19 @@ name: Build iOS IPA (unsigned)
 # free Apple ID -- no Mac and no paid Apple Developer account required.
 #
 # How to run:
-#   1. Push to V1.1 or master, OR
-#   2. Go to the repo's "Actions" tab -> "Build iOS IPA (unsigned)" -> "Run workflow".
-#   3. When it finishes, open the run and download the "betterme-unsigned-ipa" artifact.
-#   4. Unzip it, then drag BetterME-unsigned.ipa into AltStore/SideStore.
+#   1. Go to the repo's "Actions" tab -> "Build iOS IPA (unsigned)" -> "Run workflow".
+#   2. When it finishes, open the run and download the "betterme-unsigned-ipa" artifact.
+#   3. Unzip it, then drag BetterME-unsigned.ipa into AltStore/SideStore.
+#
+# NOTE: manual-trigger only, deliberately. macOS runners bill at 10x, so the free
+# 2,000 min/month allowance is really ~200 macOS minutes -- about 10 builds. Building
+# on every push burned the whole month's quota. Build an IPA when you actually want
+# to sideload one; run `flutter analyze` / tests locally for free.
 
 on:
-  push:
-    branches: [V1.1, master]
-  workflow_dispatch:   # adds a manual "Run workflow" button in the Actions tab
+  workflow_dispatch:   # manual "Run workflow" button in the Actions tab
 
-# Cancel an in-progress run if you push again to the same branch
+# Cancel an in-progress run if you start another
 concurrency:
   group: ios-build-${{ github.ref }}
   cancel-in-progress: true
@@ -61,19 +63,28 @@ jobs:
       # Force the proven CocoaPods path instead (this is a global flutter setting,
       # so it must run before pub get / build ios).
 
-      - name: Clean Flutter
-        run: flutter clean
-
       - name: Use CocoaPods instead of Swift Package Manager
         run: |
           flutter config --no-enable-swift-package-manager
           echo "===== flutter config (verify SPM flag is actually off) ====="
           flutter config
 
+      # Pure download cache for the CocoaPods spec repos. Safe to reuse (it only
+      # holds podspecs fetched from the CDN, not built artifacts) and saves a
+      # couple of minutes of network time on every run.
+      - name: Cache CocoaPods specs
+        uses: actions/cache@v4
+        with:
+          path: ~/.cocoapods
+          key: cocoapods-${{ runner.os }}-${{ hashFiles('betterme/pubspec.lock') }}
+          restore-keys: cocoapods-${{ runner.os }}-
+
+      # `flutter pub upgrade` was here too -- dropped. It re-resolves to the newest
+      # allowed versions on every run, which costs time and can pull in a breaking
+      # transitive update that fails the build (wasting 10x-billed minutes).
+      # pubspec.lock is the source of truth; upgrade deliberately, locally.
       - name: Install Dart/Flutter dependencies
-        run: |
-          flutter pub upgrade
-          flutter pub get
+        run: flutter pub get
 
       # lib/config/api_keys.dart is gitignored (it holds the Gemini key), so it's
       # absent on CI and the Dart compile fails with "Undefined name 'ApiKeys'".
@@ -95,10 +106,8 @@ jobs:
           EOF
           if [ -n "$GEMINI_API_KEY" ]; then echo "api_keys.dart: using secret"; else echo "api_keys.dart: using placeholder (AI insights disabled)"; fi
 
-      # Optional sanity checks. `analyze` won't fail the build (warnings are common),
-      # but it surfaces problems in the logs.
-      - name: Analyze (non-blocking)
-        run: flutter analyze || true
+      # `flutter analyze` used to run here. Removed: it never failed the build, so it
+      # only produced log noise -- at 10x macOS billing. Run it locally instead.
 
       - name: Build iOS app (no code signing)
         # Produces build/ios/iphoneos/Runner.app -- compiled but unsigned.
@@ -125,7 +134,7 @@ jobs:
           name: ios-build-log
           path: ${{ runner.temp }}/ios-build.log
           if-no-files-found: warn
-          retention-days: 14
+          retention-days: 3
 
       - name: Package Runner.app into an unsigned .ipa
         run: |
@@ -144,4 +153,4 @@ jobs:
           name: betterme-unsigned-ipa
           path: betterme/build/ios/iphoneos/BetterME-unsigned.ipa
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 3   # you download it minutes after the build; 30 days just eats the 0.5 GB quota

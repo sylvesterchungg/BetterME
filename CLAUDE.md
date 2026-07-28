@@ -14,9 +14,11 @@
 - **Real-time Updates**: All data syncs via Firestore streams for instant UI updates
 
 ### Implemented FYP Functional Requirements
-`FR_101` `FR_102` `FR_103` `FR_104` **`FR_105`** `FR_106` `FR_202` `FR_203` `FR_204` `FR_206` `FR_207(partial→done)` `FR_208` `FR_301` `FR_302` `FR_304` `FR_401` `FR_402` `FR_404` `FR_501` `FR_504` `FR_505` `FR_601` `FR_602` `FR_603` `FR_801` `FR_802` `FR_803` **`FR_804`** `FR_805(partial→done)` `FR_901` `FR_902` `FR_903` `FR_904`
+`FR_101` `FR_102` `FR_103` `FR_104` **`FR_105`** `FR_106` `FR_202` `FR_203` `FR_204` `FR_206` `FR_207(partial→done)` `FR_208` `FR_301` `FR_302` `FR_304` `FR_401` `FR_402` `FR_404` `FR_501` `FR_504` `FR_505` `FR_601` `FR_602` `FR_603` `FR_801` `FR_802` `FR_803` **`FR_804`** `FR_805(partial→done)` `FR_901` `FR_902` `FR_903` `FR_904` **`FR_905`**
 
 **Sprint 1 additions (2026-06-18):** FR_105 (forgot password), FR_207 (today's mood on dashboard), FR_804 (change password — Google users excluded), FR_805 (avg mood/sleep/completion stats on profile)
+
+**Sprint 2 addition (2026-07-27):** FR_905 (daily logging reminder — fires only on days with no log entry). Added to close the gap between the strongest elicitation finding (42.9% of survey respondents abandoned previous wellbeing apps because they *kept forgetting to log*) and the delivered notification set, which previously covered tasks, hydration and streak milestones but never prompted the logging itself.
 
 ---
 
@@ -29,7 +31,7 @@ betterme/
 │   ├── theme.dart             # Material Design theme (light/dark)
 │   ├── firebase_options.dart  # Firebase platform-specific config (auto-generated)
 │   ├── models/
-│   │   └── models.dart        # Data models (User, Task, LogEntry, Friend, TaskCategory)
+│   │   └── models.dart        # Data models (User, PrivateProfile, Task, LogEntry, Friend, TaskCategory)
 │   ├── services/
 │   │   └── database_service.dart  # Firestore & Firebase Storage operations
 │   ├── providers/
@@ -120,11 +122,12 @@ All models have:
 
 ### `models.dart`
 **Models:**
-1. **User**: Profile info, streak, score, water intake, friends list
-2. **Task**: Title, completion status, category, due date, reminder time, repeat interval
-3. **TaskCategory**: Custom task categories with icons
-4. **LogEntry**: Sleep hours, mood score, notes, triggers, emotions
-5. **Friend**: Reference to friend with avatar, username, streak, activity
+1. **User**: Public profile info (username, avatar, streak, score, water intake, friends list). World-readable — holds **no PII**.
+2. **PrivateProfile**: Owner-only PII (birth date, phone). Stored in `privateProfile/{userId}`, never on the `users` doc. Keep any new personal details here.
+3. **Task**: Title, completion status, category, due date, reminder time, repeat interval
+4. **TaskCategory**: Custom task categories with icons
+5. **LogEntry**: Sleep hours, mood score, notes, triggers, emotions
+6. **Friend**: Reference to friend with avatar, username, streak, activity
 
 ---
 
@@ -144,9 +147,10 @@ cd betterme
 firebase deploy --only firestore:rules,firestore:indexes
 ```
 
-**Model (as of 2026-07-01):**
+**Model (as of 2026-07-22):**
 - **Private, owner-only** (`resource.data.userId == request.auth.uid`): `logs`, `tasks`, `taskCategories`, `productivity`. A user can never read another user's mood/sleep logs — this is what enforces privacy at the data layer, independent of the app UI.
-- **`users` profiles**: readable by any signed-in user (the global leaderboard, "add friend by username" search, and the friends list all read other users' profile docs). Profile docs hold no private logs, so this is intentional.
+- **`privateProfile/{userId}`** (owner-only, keyed by uid — `request.auth.uid == userId`): personally identifiable info that must **not** be world-readable — currently **birth date and phone number** (`PrivateProfile` model). This doc is never readable by other users. **Keep any new PII here, never on `users`.**
+- **`users` profiles**: readable by any signed-in user (the global leaderboard, "add friend by username" search, and the friends list all read other users' profile docs). Profile docs hold no private logs and **no PII** (that lives in `privateProfile`), so this is intentional.
 - **`friendRequests`**: visible only to the sender or recipient.
 
 > **⚠️ Known limitation (friendship is not cryptographically two-sided):** the `users` update rule permits *any* signed-in user to modify **only** the `friendsIds` field of *another* user's doc. This is required so that accepting a friend request can add each user to the other's friends list without a Cloud Function. It cannot touch any other field (scores/usernames stay protected), but it does mean a client could unilaterally add itself to someone's `friendsIds`. Acceptable for the current client-only phase; a proper fix would move the mutual-add into a Cloud Function (or callable) and lock `friendsIds` to server writes only. See [`friendRequests` handling in `database_service.dart`](betterme/lib/services/database_service.dart).
@@ -193,6 +197,12 @@ service firebase.storage {
 - Stored as `waterIntake` and `waterGoal` on User document
 - `addWaterIntake(amount)` increments intake for the day
 - Displayed on dashboard with visual progress
+
+### Daily Log Reminder (FR_905)
+- Time stored as `logReminderMinutes` on User (minutes from midnight; `-1` = off, default `1260` = 21:00)
+- **The OS cannot evaluate a condition at fire time**, so "only if not logged" is achieved by *rescheduling*, not by a runtime check. `NotificationService.scheduleLogReminder(minutes, skipToday:)` schedules a **daily-repeating** notification whose first occurrence is pushed to tomorrow when `skipToday` is true
+- `AppProvider._syncLogReminder()` recomputes `skipToday` from `hasLoggedToday` and re-arms. It is called from three places: login, **every logs-stream emission** (so logging today immediately suppresses tonight's nudge), and `setLogReminder()`
+- The schedule repeats daily rather than firing one-shot, so the reminder keeps working even if the app is never reopened — which is precisely the abandonment case it targets
 
 ### Step Counting via Pedometer
 - `Pedometer.stepCountStream` is listened to in `_initPedometer()`

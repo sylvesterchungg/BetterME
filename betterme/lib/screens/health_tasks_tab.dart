@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
@@ -86,6 +87,14 @@ class HealthTasksTab extends StatefulWidget {
 class _HealthTasksTabState extends State<HealthTasksTab> {
   final TextEditingController _waterController = TextEditingController();
 
+  // Backs the water "Undo" snackbar's dismissal. We close the snackbar
+  // ourselves via this timer rather than relying on SnackBar.duration, which
+  // was observed not to auto-dismiss in this app/SDK setup.
+  Timer? _undoTimer;
+
+  // Selectable hydration-reminder intervals, in minutes (0 = off).
+  static const List<int> _kHydrationIntervals = [0, 30, 60, 120, 180, 240];
+
   // Task IDs that have been toggled to complete but are still animating out
   // of the active list. Removed from this set after the animation completes,
   // at which point they naturally appear in the Completed section.
@@ -107,6 +116,7 @@ class _HealthTasksTabState extends State<HealthTasksTab> {
 
   @override
   void dispose() {
+    _undoTimer?.cancel();
     _waterController.dispose();
     super.dispose();
   }
@@ -140,20 +150,27 @@ class _HealthTasksTabState extends State<HealthTasksTab> {
     AppProvider provider,
     int amount,
   ) {
-    ScaffoldMessenger.of(context).clearSnackBars();
-    ScaffoldMessenger.of(context).showSnackBar(
+    final messenger = ScaffoldMessenger.of(context);
+    _undoTimer?.cancel();
+    messenger.clearSnackBars();
+    final controller = messenger.showSnackBar(
       SnackBar(
         content: Text('Added ${amount}ml of water'),
-        duration: const Duration(seconds: 3),
+        // Very long framework duration; we drive the actual dismissal with our
+        // own timer below (SnackBar.duration wasn't auto-dismissing here).
+        duration: const Duration(days: 1),
         action: SnackBarAction(
           label: 'Undo',
           onPressed: () {
-            ScaffoldMessenger.of(context).hideCurrentSnackBar();
+            _undoTimer?.cancel();
             provider.addWaterIntake(-amount);
           },
         ),
       ),
     );
+    // Force the snackbar to close after 3 seconds regardless of the framework's
+    // own auto-dismiss behavior.
+    _undoTimer = Timer(const Duration(seconds: 3), controller.close);
   }
 
   void _showEditGoalDialog(
@@ -162,6 +179,8 @@ class _HealthTasksTabState extends State<HealthTasksTab> {
     int currentGoal,
   ) {
     final goalController = TextEditingController(text: currentGoal.toString());
+    // .then() disposes it once the dialog closes (Save, Cancel, or backdrop
+    // tap all complete this Future) — there's no owning State here to do it.
     showDialog(
       context: context,
       builder: (context) {
@@ -193,32 +212,36 @@ class _HealthTasksTabState extends State<HealthTasksTab> {
           ],
         );
       },
-    );
+    ).then((_) => goalController.dispose());
   }
 
   @override
   Widget build(BuildContext context) {
-    return Consumer<AppProvider>(
-      builder: (context, provider, child) {
-        final customCategorySections = provider.taskCategories.map((category) {
-          return _TaskCategoryUi(
-            name: category.name,
-            iconKey: category.iconKey,
-            icon: TaskCategory.iconFromKey(category.iconKey),
-            backgroundColor: AppTheme.surfaceContainerLow,
-            iconColor: AppTheme.primary,
-          );
-        }).toList();
+    // The Scaffold is built ONCE and kept out of the Consumer: it hosts the
+    // water "Undo" SnackBar, and rebuilding the host Scaffold on provider
+    // changes can disturb the SnackBar. Only the body below rebuilds. (The
+    // snackbar's dismissal is also driven explicitly — see _showUndoSnackbar.)
+    return Scaffold(
+      backgroundColor: Colors.transparent,
+      body: SafeArea(
+        child: Consumer<AppProvider>(
+          builder: (context, provider, child) {
+            final customCategorySections = provider.taskCategories.map((category) {
+              return _TaskCategoryUi(
+                name: category.name,
+                iconKey: category.iconKey,
+                icon: TaskCategory.iconFromKey(category.iconKey),
+                backgroundColor: AppTheme.surfaceContainerLow,
+                iconColor: AppTheme.primary,
+              );
+            }).toList();
 
-        final allCategories = [
-          ..._builtInTaskCategories,
-          ...customCategorySections,
-        ];
+            final allCategories = [
+              ..._builtInTaskCategories,
+              ...customCategorySections,
+            ];
 
-        return Scaffold(
-          backgroundColor: Colors.transparent,
-          body: SafeArea(
-            child: SingleChildScrollView(
+            return SingleChildScrollView(
               padding: const EdgeInsets.all(20),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -235,19 +258,20 @@ class _HealthTasksTabState extends State<HealthTasksTab> {
                   const SizedBox(height: 80),
                 ],
               ),
-            ),
-          ),
-          floatingActionButton: FloatingActionButton(
-            onPressed: () => _showAddTaskBottomSheet(context, provider),
-            backgroundColor: AppTheme.primary,
-            foregroundColor: Colors.white,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(16),
-            ),
-            child: const Icon(Icons.add),
-          ),
-        );
-      },
+            );
+          },
+        ),
+      ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: () =>
+            _showAddTaskBottomSheet(context, context.read<AppProvider>()),
+        backgroundColor: AppTheme.primary,
+        foregroundColor: Colors.white,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: const Icon(Icons.add),
+      ),
     );
   }
 
@@ -709,7 +733,7 @@ class _HealthTasksTabState extends State<HealthTasksTab> {
                 onPressed: () {
                   if (_waterController.text.isNotEmpty) {
                     final val = int.tryParse(_waterController.text);
-                    if (val != null && val > 0) {
+                    if (val != null && val > 0 && val <= 20000) {
                       provider.addWaterIntake(val);
                       _showUndoSnackbar(context, provider, val);
                       _waterController.clear();
@@ -728,7 +752,136 @@ class _HealthTasksTabState extends State<HealthTasksTab> {
               ),
             ],
           ),
+          const SizedBox(height: 12),
+          _buildHydrationReminderRow(context, provider),
         ],
+      ),
+    );
+  }
+
+  // A tappable row that shows the current hydration-reminder interval and opens
+  // the interval picker.
+  Widget _buildHydrationReminderRow(BuildContext context, AppProvider provider) {
+    final minutes = provider.currentUser?.hydrationReminderMinutes ?? 0;
+    final isOn = minutes > 0;
+    const accent = Color(0xFF0288D1);
+    return InkWell(
+      borderRadius: BorderRadius.circular(8),
+      onTap: () => _showHydrationReminderDialog(context, provider, minutes),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+        decoration: BoxDecoration(
+          color: AppTheme.surfaceContainerLow,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: AppTheme.borderDefault),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              isOn ? Icons.notifications_active : Icons.notifications_none,
+              size: 20,
+              color: isOn ? accent : AppTheme.onSurfaceVariant,
+            ),
+            const SizedBox(width: 10),
+            const Expanded(
+              child: Text(
+                'Reminder',
+                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+              ),
+            ),
+            Text(
+              _hydrationReminderLabel(minutes),
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: isOn ? accent : AppTheme.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(width: 2),
+            const Icon(Icons.chevron_right, size: 20, color: AppTheme.outline),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _hydrationReminderLabel(int minutes) {
+    switch (minutes) {
+      case 0:
+        return 'Off';
+      case 30:
+        return 'Every 30 min';
+      case 60:
+        return 'Every hour';
+      default:
+        return 'Every ${minutes ~/ 60} hours';
+    }
+  }
+
+  void _showHydrationReminderDialog(
+    BuildContext context,
+    AppProvider provider,
+    int currentMinutes,
+  ) {
+    showDialog(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Hydration Reminder'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Padding(
+                padding: EdgeInsets.only(bottom: 8),
+                child: Text(
+                  'Remind me to drink water:',
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: AppTheme.onSurfaceVariant,
+                  ),
+                ),
+              ),
+              ..._kHydrationIntervals.map((m) {
+                final selected = m == currentMinutes;
+                return ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: Icon(
+                    selected
+                        ? Icons.radio_button_checked
+                        : Icons.radio_button_unchecked,
+                    color: selected ? AppTheme.primary : AppTheme.outline,
+                  ),
+                  title: Text(_hydrationReminderLabel(m)),
+                  onTap: () {
+                    Navigator.pop(dialogContext);
+                    provider.setHydrationReminder(m);
+                    _showReminderConfirmation(context, m);
+                  },
+                );
+              }),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Close'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  void _showReminderConfirmation(BuildContext context, int minutes) {
+    ScaffoldMessenger.of(context).clearSnackBars();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          minutes > 0
+              ? 'Hydration reminder set — ${_hydrationReminderLabel(minutes).toLowerCase()}'
+              : 'Hydration reminder turned off',
+        ),
+        duration: const Duration(seconds: 2),
       ),
     );
   }
@@ -800,6 +953,9 @@ class _AddTaskBottomSheetState extends State<AddTaskBottomSheet> {
   String _selectedCategory = 'Mindfulness';
   String _selectedCategoryIconKey = 'self_improvement';
   DateTime _selectedDate = DateTime.now();
+  // Guards against a fast double-tap on "Create Task" firing addTask() twice
+  // (each call creates a brand-new task document — there's no dedupe).
+  bool _saving = false;
   bool _reminderEnabled = false;
   TimeOfDay _reminderTime = const TimeOfDay(hour: 9, minute: 0);
   String _repeatInterval = 'None';
@@ -809,7 +965,6 @@ class _AddTaskBottomSheetState extends State<AddTaskBottomSheet> {
     'Daily',
     'Weekly',
     'Monthly',
-    'Custom',
   ];
 
   List<_TaskCategoryUi> get _categoryOptions {
@@ -846,7 +1001,10 @@ class _AddTaskBottomSheetState extends State<AddTaskBottomSheet> {
           );
         }
       }
-      _repeatInterval = task.repeatInterval;
+      // 'Custom' was removed (it never actually recurred); fall back to 'None'
+      // so an older task edited now shows a valid, selectable option.
+      _repeatInterval =
+          _repeatOptions.contains(task.repeatInterval) ? task.repeatInterval : 'None';
     }
   }
 
@@ -857,7 +1015,8 @@ class _AddTaskBottomSheetState extends State<AddTaskBottomSheet> {
   }
 
   Future<void> _saveTask() async {
-    if (_titleController.text.trim().isEmpty) return;
+    if (_titleController.text.trim().isEmpty || _saving) return;
+    setState(() => _saving = true);
 
     final reminderStr = _reminderEnabled
         ? '${_reminderTime.hour.toString().padLeft(2, '0')}:${_reminderTime.minute.toString().padLeft(2, '0')}'
@@ -875,19 +1034,41 @@ class _AddTaskBottomSheetState extends State<AddTaskBottomSheet> {
         reminderTime: reminderStr,
         repeatInterval: _repeatInterval,
       );
-      await widget.provider.updateTask(updated);
+      try {
+        await widget.provider.updateTask(updated);
+      } catch (e) {
+        if (mounted) setState(() => _saving = false);
+        _showSaveError();
+        return;
+      }
     } else {
-      await widget.provider.addTask(
-        _titleController.text.trim(),
-        category: _selectedCategory,
-        categoryIconKey: _selectedCategoryIconKey,
-        dueDate: _selectedDate,
-        reminderTime: reminderStr,
-        repeatInterval: _repeatInterval,
-      );
+      try {
+        await widget.provider.addTask(
+          _titleController.text.trim(),
+          category: _selectedCategory,
+          categoryIconKey: _selectedCategoryIconKey,
+          dueDate: _selectedDate,
+          reminderTime: reminderStr,
+          repeatInterval: _repeatInterval,
+        );
+      } catch (e) {
+        if (mounted) setState(() => _saving = false);
+        _showSaveError();
+        return;
+      }
     }
 
     if (mounted) Navigator.pop(context);
+  }
+
+  void _showSaveError() {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Could not save task — check your connection and try again.'),
+        backgroundColor: AppTheme.error,
+      ),
+    );
   }
 
   Future<void> _showNewCategoryDialog() async {
@@ -907,10 +1088,16 @@ class _AddTaskBottomSheetState extends State<AddTaskBottomSheet> {
 
   Future<void> _pickDueDate() async {
     final now = DateTime.now();
+    final firstDate = DateTime(now.year, now.month, now.day);
+    // Editing an already-overdue task seeds _selectedDate with its past due
+    // date; showDatePicker asserts initialDate can't be before firstDate, so
+    // without this clamp opening the picker on an overdue task crashes.
+    final initial =
+        _selectedDate.isBefore(firstDate) ? firstDate : _selectedDate;
     final date = await showDatePicker(
       context: context,
-      initialDate: _selectedDate,
-      firstDate: DateTime(now.year, now.month, now.day),
+      initialDate: initial,
+      firstDate: firstDate,
       lastDate: now.add(const Duration(days: 365)),
     );
     if (date != null) setState(() => _selectedDate = date);
@@ -971,7 +1158,7 @@ class _AddTaskBottomSheetState extends State<AddTaskBottomSheet> {
           SizedBox(
             width: double.infinity,
             child: ElevatedButton(
-              onPressed: _saveTask,
+              onPressed: _saving ? null : _saveTask,
               style: ElevatedButton.styleFrom(
                 backgroundColor: AppTheme.primary,
                 foregroundColor: Colors.white,
@@ -1298,26 +1485,13 @@ class _AddTaskBottomSheetState extends State<AddTaskBottomSheet> {
           borderRadius: BorderRadius.circular(26),
           border: Border.all(color: AppTheme.primaryContainer, width: 1.5),
         ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (option == 'Custom') ...[
-              Icon(
-                Icons.settings_outlined,
-                size: 16,
-                color: isSelected ? Colors.white : AppTheme.onSurfaceVariant,
-              ),
-              const SizedBox(width: 6),
-            ],
-            Text(
-              option,
-              style: TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
-                color: isSelected ? Colors.white : AppTheme.onSurfaceVariant,
-              ),
-            ),
-          ],
+        child: Text(
+          option,
+          style: TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.w600,
+            color: isSelected ? Colors.white : AppTheme.onSurfaceVariant,
+          ),
         ),
       ),
     );

@@ -6,6 +6,7 @@ import '../providers/app_provider.dart';
 import '../models/models.dart';
 import '../services/ai_insight_service.dart';
 import '../theme.dart';
+import '../utils/stats.dart';
 import '../widgets/app_page_header.dart';
 
 class TrendsInsightsScreen extends StatefulWidget {
@@ -24,11 +25,21 @@ class _TrendsInsightsScreenState extends State<TrendsInsightsScreen> {
   // generate) — prevents re-triggering on every rebuild and error loops.
   String? _handledSignature;
 
+  // Coping-suggestions state (mirrors the insight flow above).
+  AICopingTips? _coping;
+  bool _loadingCoping = false;
+  String? _copingHandledSig;
+
   /// How long a cached insight stays fresh before we regenerate it.
   static const Duration _cacheTtl = Duration(hours: 24);
 
   Future<void> _generateInsight(AppProvider provider, List<LogEntry> logs,
       List<ProductivityRecord> records) async {
+    // Hard stop here too, not just at the auto-trigger in build() — the
+    // refresh icon and the "Try again" error-state button both call this
+    // directly, and without this check they'd send data to Gemini even
+    // when the user hasn't consented (or has turned it back off).
+    if (provider.currentUser?.aiInsightsEnabled != true) return;
     if (_loadingAI) return;
     setState(() {
       _loadingAI = true;
@@ -37,6 +48,7 @@ class _TrendsInsightsScreenState extends State<TrendsInsightsScreen> {
     final result = await AIInsightService.generateInsights(
       logs: logs,
       productivityRecords: records,
+      currentStreak: provider.currentUser?.streak,
     );
     if (!mounted) return;
     setState(() {
@@ -54,17 +66,36 @@ class _TrendsInsightsScreenState extends State<TrendsInsightsScreen> {
     }
   }
 
+  Future<void> _generateCoping(
+      AppProvider provider, List<LogEntry> logs) async {
+    if (provider.currentUser?.aiInsightsEnabled != true) return;
+    if (_loadingCoping) return;
+    setState(() => _loadingCoping = true);
+    final result = await AIInsightService.generateCoping(logs: logs);
+    if (!mounted) return;
+    setState(() {
+      _loadingCoping = false;
+      if (result != null) _coping = result;
+    });
+    if (result != null) provider.persistCoping(result);
+  }
+
   @override
   Widget build(BuildContext context) {
     final appProvider = context.watch<AppProvider>();
     final logs = appProvider.logs;
     final productivityRecords = appProvider.productivityRecords;
 
+    // Consent gate (FR_1004-equivalent): null (never asked) or false
+    // (declined/turned off) both mean no insight/coping generation, and no
+    // display of anything previously cached, until the user opts in.
+    final aiConsented = appProvider.currentUser?.aiInsightsEnabled == true;
+
     // Decide once per data-signature whether to reuse the cache or regenerate.
     // A changed signature (new data) re-enters even after a prior error, so
     // fresh logs auto-retry; the sync guard below stops same-data error loops.
     final loggedDays = AIInsightService.loggedDaysInWindow(logs);
-    if (loggedDays >= AIInsightService.minDaysForInsight && !_loadingAI) {
+    if (aiConsented && loggedDays >= AIInsightService.minDaysForInsight && !_loadingAI) {
       final currentSig =
           AIInsightService.signatureFor(logs, productivityRecords);
       if (_handledSignature != currentSig) {
@@ -88,6 +119,28 @@ class _TrendsInsightsScreenState extends State<TrendsInsightsScreen> {
       }
     }
 
+    // Coping suggestions: only when rough days (nightmares/symptoms/low mood)
+    // cluster in the recent logs. Same cache-or-generate approach as insights.
+    final showCoping = AIInsightService.hasRoughCluster(logs);
+    if (aiConsented && showCoping && !_loadingCoping) {
+      final copingSig = AIInsightService.copingSignatureFor(logs);
+      if (_copingHandledSig != copingSig) {
+        _copingHandledSig = copingSig;
+        final cachedCoping = appProvider.cachedCoping;
+        final copingFresh = cachedCoping != null &&
+            cachedCoping.signature == copingSig &&
+            DateTime.now().difference(cachedCoping.generatedAt) < _cacheTtl;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          if (copingFresh) {
+            setState(() => _coping = cachedCoping);
+          } else {
+            _generateCoping(appProvider, logs);
+          }
+        });
+      }
+    }
+
     return SafeArea(
       child: SingleChildScrollView(
         padding: const EdgeInsets.all(20),
@@ -98,13 +151,11 @@ class _TrendsInsightsScreenState extends State<TrendsInsightsScreen> {
             const SizedBox(height: 24),
             _buildAIInsightCard(appProvider, logs, productivityRecords),
             const SizedBox(height: 24),
+            _buildInsightVisual(logs, productivityRecords),
+            ..._buildCopingSection(showCoping),
             _buildWeeklyTrends(logs, productivityRecords),
             const SizedBox(height: 24),
             _buildProductivityTrend(logs, productivityRecords),
-            const SizedBox(height: 24),
-            _buildCorrelations(logs, productivityRecords),
-            const SizedBox(height: 24),
-            _buildDeepInsights(logs, productivityRecords),
             const SizedBox(height: 24),
             _buildTopEmotions(logs),
             const SizedBox(height: 32),
@@ -112,6 +163,17 @@ class _TrendsInsightsScreenState extends State<TrendsInsightsScreen> {
         ),
       ),
     );
+  }
+
+  /// Coping card + trailing spacing, only when a rough cluster exists and we
+  /// have tips (or are loading them). Returns [] otherwise (no vertical space).
+  List<Widget> _buildCopingSection(bool showCoping) {
+    if (!showCoping) return const [];
+    if (_loadingCoping && _coping == null) {
+      return [_buildCopingLoading(), const SizedBox(height: 24)];
+    }
+    if (_coping == null || _coping!.isEmpty) return const [];
+    return [_buildCopingCard(_coping!), const SizedBox(height: 24)];
   }
 
   // ══════════════════════════════ AI INSIGHT CARD ════════════════════════════
@@ -123,6 +185,7 @@ class _TrendsInsightsScreenState extends State<TrendsInsightsScreen> {
 
   Widget _buildAIInsightCard(AppProvider provider, List<LogEntry> logs,
       List<ProductivityRecord> records) {
+    final aiConsented = provider.currentUser?.aiInsightsEnabled == true;
     final loggedDays = AIInsightService.loggedDaysInWindow(logs);
     final hasEnoughData = loggedDays >= AIInsightService.minDaysForInsight;
     final remaining = AIInsightService.minDaysForInsight - loggedDays;
@@ -172,7 +235,7 @@ class _TrendsInsightsScreenState extends State<TrendsInsightsScreen> {
                   ),
                 ),
                 const Spacer(),
-                if (hasEnoughData && !_loadingAI)
+                if (aiConsented && hasEnoughData && !_loadingAI)
                   GestureDetector(
                     onTap: () => _generateInsight(provider, logs, records),
                     child: Container(
@@ -187,7 +250,9 @@ class _TrendsInsightsScreenState extends State<TrendsInsightsScreen> {
               ],
             ),
             const SizedBox(height: 16),
-            if (!hasEnoughData)
+            if (!aiConsented)
+              _buildAIConsentPrompt(provider)
+            else if (!hasEnoughData)
               _buildAINotEnough(remaining)
             else if (_loadingAI)
               _buildAILoading()
@@ -203,6 +268,41 @@ class _TrendsInsightsScreenState extends State<TrendsInsightsScreen> {
     );
   }
 
+  Widget _buildAIConsentPrompt(AppProvider provider) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text('Your BetterME Assistant',
+            style: TextStyle(
+                fontSize: 17, fontWeight: FontWeight.w700, color: _aiInk)),
+        const SizedBox(height: 8),
+        const Text(
+          "Turn on AI Insights to get a personalised, plain-language read of "
+          "your last 7 days. This sends your mood, sleep, symptoms and task "
+          "data to Google's Gemini AI to generate it — you can turn it off "
+          "again anytime in Profile > AI Insights.",
+          style: TextStyle(fontSize: 13, color: _aiBody, height: 1.5),
+        ),
+        const SizedBox(height: 14),
+        GestureDetector(
+          onTap: () => provider.setAiInsightsEnabled(true),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
+            decoration: BoxDecoration(
+              color: _aiTeal,
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: const Text('Turn on AI Insights',
+                style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.white)),
+          ),
+        ),
+      ],
+    );
+  }
+
   Widget _buildAINotEnough(int remaining) {
     final dayWord = remaining == 1 ? 'day' : 'days';
     return Column(
@@ -213,8 +313,8 @@ class _TrendsInsightsScreenState extends State<TrendsInsightsScreen> {
                 fontSize: 17, fontWeight: FontWeight.w700, color: _aiInk)),
         const SizedBox(height: 8),
         Text(
-          'Log $remaining more $dayWord of sleep and mood data to unlock your '
-          '7-day correlation insight!',
+          'Log $remaining more $dayWord of sleep and mood, and I\'ll show you '
+          'how your rest, mood and focus connect over the week!',
           style: const TextStyle(fontSize: 14, color: _aiBody, height: 1.5),
         ),
       ],
@@ -341,6 +441,277 @@ class _TrendsInsightsScreenState extends State<TrendsInsightsScreen> {
     );
   }
 
+  // ═══════════════════ AI INSIGHT VISUAL (the story in a chart) ══════════════
+
+  /// A 7-day overlay of sleep, mood and tasks-done — the picture behind the AI
+  /// insight, so the user can SEE the sleep → mood → progress story it describes.
+  Widget _buildInsightVisual(
+      List<LogEntry> logs, List<ProductivityRecord> records) {
+    // Only shown alongside a real insight (needs enough recent days).
+    if (AIInsightService.loggedDaysInWindow(logs) <
+        AIInsightService.minDaysForInsight) {
+      return const SizedBox.shrink();
+    }
+
+    const sleepColor = Color(0xFF0D9488);
+    const moodColor = Color(0xFFF59E0B);
+    const prodColor = Color(0xFF10B981);
+
+    final now = DateTime.now();
+    final days = List.generate(7, (i) => now.subtract(Duration(days: 6 - i)));
+    final logByDay = {for (final l in logs) _dayKey(l.date): l};
+    final recMap = {for (final r in records) r.date: r};
+
+    final sleep = <double?>[];
+    final mood = <double?>[];
+    final prod = <double?>[];
+    var hasSleep = false, hasMood = false, hasProd = false;
+    for (final d in days) {
+      final key = _dayKey(d);
+      final l = logByDay[key];
+      final r = recMap[key];
+      // Normalize each to 0..1 so they overlay comparably.
+      final s = (l != null && l.sleepHours > 0)
+          ? (l.sleepHours / 10).clamp(0.0, 1.0)
+          : null;
+      final m = (l != null && l.moodScore > 0)
+          ? (l.moodScore / 10).clamp(0.0, 1.0)
+          : null;
+      final p = r?.completionRate.clamp(0.0, 1.0);
+      if (s != null) hasSleep = true;
+      if (m != null) hasMood = true;
+      if (p != null) hasProd = true;
+      sleep.add(s);
+      mood.add(m);
+      prod.add(p);
+    }
+
+    final series = <List<double?>>[];
+    final colors = <Color>[];
+    final legend = <({String label, Color color})>[];
+    if (hasSleep) {
+      series.add(sleep);
+      colors.add(sleepColor);
+      legend.add((label: 'Sleep', color: sleepColor));
+    }
+    if (hasMood) {
+      series.add(mood);
+      colors.add(moodColor);
+      legend.add((label: 'Mood', color: moodColor));
+    }
+    if (hasProd) {
+      series.add(prod);
+      colors.add(prodColor);
+      legend.add((label: 'Tasks done', color: prodColor));
+    }
+    if (series.isEmpty) return const SizedBox.shrink();
+
+    final dayLabels = days.map((d) => DateFormat('E').format(d)).toList();
+
+    return Column(
+      children: [
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: AppTheme.borderDefault),
+            boxShadow: [
+              BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.05),
+                  blurRadius: 12,
+                  offset: const Offset(0, 4))
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('The story behind your insight',
+                  style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                      color: AppTheme.onSurface)),
+              const SizedBox(height: 4),
+              const Text(
+                  'How your sleep, mood and tasks moved together this week',
+                  style: TextStyle(fontSize: 12, color: AppTheme.outline)),
+              const SizedBox(height: 16),
+              Wrap(
+                spacing: 16,
+                runSpacing: 6,
+                children: [
+                  for (final e in legend)
+                    Row(mainAxisSize: MainAxisSize.min, children: [
+                      Container(
+                          width: 10,
+                          height: 10,
+                          decoration: BoxDecoration(
+                              color: e.color, shape: BoxShape.circle)),
+                      const SizedBox(width: 5),
+                      Text(e.label,
+                          style: const TextStyle(
+                              fontSize: 11, color: AppTheme.onSurfaceVariant)),
+                    ]),
+                ],
+              ),
+              const SizedBox(height: 14),
+              SizedBox(
+                height: 120,
+                width: double.infinity,
+                child: CustomPaint(
+                    painter: _TriLinePainter(series: series, colors: colors)),
+              ),
+              const SizedBox(height: 6),
+              Row(
+                children: [
+                  for (final lbl in dayLabels)
+                    Expanded(
+                        child: Text(lbl,
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                                fontSize: 9, color: AppTheme.outline))),
+                ],
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 24),
+      ],
+    );
+  }
+
+  // ═════════════════════════ COPING SUGGESTIONS (AI) ═════════════════════════
+
+  Widget _buildCopingLoading() {
+    const accent = Color(0xFF8B7CC8);
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF3F1FB),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: accent.withValues(alpha: 0.18)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Row(children: [
+            Icon(Icons.spa_outlined, size: 16, color: accent),
+            SizedBox(width: 8),
+            Text('A little support',
+                style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: Color(0xFF3B3560))),
+          ]),
+          const SizedBox(height: 14),
+          LinearProgressIndicator(
+            backgroundColor: accent.withValues(alpha: 0.15),
+            valueColor: const AlwaysStoppedAnimation<Color>(accent),
+            borderRadius: BorderRadius.circular(4),
+          ),
+          const SizedBox(height: 8),
+          const Text('Putting together a few calming ideas for you…',
+              style: TextStyle(fontSize: 12, color: Color(0xFF4B4463))),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCopingCard(AICopingTips coping) {
+    const accent = Color(0xFF8B7CC8);
+    const ink = Color(0xFF3B3560);
+    const body = Color(0xFF4B4463);
+    return Container(
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [Color(0xFFF3F1FB), Color(0xFFF7F1F6)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: accent.withValues(alpha: 0.18)),
+        boxShadow: [
+          BoxShadow(
+              color: accent.withValues(alpha: 0.10),
+              blurRadius: 16,
+              offset: const Offset(0, 6)),
+        ],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              decoration: BoxDecoration(
+                color: accent.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                Icon(Icons.spa_outlined, size: 13, color: accent),
+                SizedBox(width: 5),
+                Text('A little support · AI-generated',
+                    style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        color: accent)),
+              ]),
+            ),
+            if (coping.intro.isNotEmpty) ...[
+              const SizedBox(height: 14),
+              Text(coping.intro,
+                  style: const TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                      color: ink,
+                      height: 1.4)),
+            ],
+            const SizedBox(height: 16),
+            for (int i = 0; i < coping.tips.length; i++) ...[
+              if (i > 0) const SizedBox(height: 12),
+              _buildCopingTip(coping.tips[i], accent, ink, body),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCopingTip(AICopingTip tip, Color accent, Color ink, Color body) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          margin: const EdgeInsets.only(top: 2),
+          padding: const EdgeInsets.all(6),
+          decoration:
+              BoxDecoration(color: accent.withValues(alpha: 0.14), shape: BoxShape.circle),
+          child: Icon(Icons.favorite, size: 12, color: accent),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (tip.title.isNotEmpty)
+                Text(tip.title,
+                    style: TextStyle(
+                        fontSize: 13.5,
+                        fontWeight: FontWeight.w700,
+                        color: ink)),
+              if (tip.detail.isNotEmpty) ...[
+                const SizedBox(height: 2),
+                Text(tip.detail,
+                    style: TextStyle(fontSize: 13, color: body, height: 1.45)),
+              ],
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
   // ══════════════════════════════ WEEKLY TRENDS ══════════════════════════════
 
   Widget _buildWeeklyTrends(List<LogEntry> logs, List<ProductivityRecord> productivityRecords) {
@@ -361,13 +732,11 @@ class _TrendsInsightsScreenState extends State<TrendsInsightsScreen> {
     final moodVals = dayKeys.map((k) => logByDay[k]?.moodScore ?? 0.0).toList();
     final prodVals = dayKeys.map((k) => recordMap[k]?.completionRate ?? 0.0).toList();
 
-    final sleepNonZero = sleepVals.where((v) => v > 0);
-    final moodNonZero = moodVals.where((v) => v > 0);
-    final prodNonZero = prodVals.where((v) => v > 0);
-
-    final avgSleep = sleepNonZero.isEmpty ? 0.0 : sleepNonZero.reduce((a, b) => a + b) / sleepNonZero.length;
-    final avgMood = moodNonZero.isEmpty ? 0.0 : moodNonZero.reduce((a, b) => a + b) / moodNonZero.length;
-    final avgProd = prodNonZero.isEmpty ? 0.0 : prodNonZero.reduce((a, b) => a + b) / prodNonZero.length;
+    // Same rule as the Profile stats: average only the days that carry real
+    // data (see meanIgnoringZero in utils/stats.dart).
+    final avgSleep = meanIgnoringZero(sleepVals);
+    final avgMood = meanIgnoringZero(moodVals);
+    final avgProd = meanIgnoringZero(prodVals);
 
     String moodStatus;
     if (avgMood == 0) {
@@ -616,50 +985,6 @@ class _TrendsInsightsScreenState extends State<TrendsInsightsScreen> {
     );
   }
 
-  /// A visible placeholder card used when a section has too little data yet,
-  /// so features like FR_405 always appear on the page instead of silently
-  /// collapsing to nothing.
-  Widget _buildEmptyPlaceholder({
-    required IconData icon,
-    required String title,
-    required String message,
-  }) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(title,
-            style:
-                const TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
-        const SizedBox(height: 16),
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.symmetric(vertical: 28, horizontal: 20),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: AppTheme.borderDefault),
-          ),
-          child: Column(
-            children: [
-              Icon(icon,
-                  size: 34,
-                  color: AppTheme.outlineVariant.withValues(alpha: 0.7)),
-              const SizedBox(height: 12),
-              Text(
-                message,
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                    fontSize: 13,
-                    color: AppTheme.onSurfaceVariant,
-                    height: 1.4),
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
   Widget _statPill(IconData icon, String label, Color color) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
@@ -695,7 +1020,7 @@ class _TrendsInsightsScreenState extends State<TrendsInsightsScreen> {
     final c = _pearson(moodProdX, moodProdY);
     if (c == null) {
       return Text(
-        'Log a few more days to unlock the mood → productivity correlation.',
+        'Log a few more days to see how your mood and getting things done go together.',
         style: TextStyle(
             fontSize: 12,
             color: AppTheme.onSurfaceVariant.withValues(alpha: 0.75),
@@ -704,11 +1029,14 @@ class _TrendsInsightsScreenState extends State<TrendsInsightsScreen> {
     }
 
     final mag = c.abs();
-    final direction = c >= 0 ? 'rises with' : 'drops with';
-    final strength =
-        mag >= 0.6 ? 'strongly' : (mag >= 0.3 ? 'moderately' : 'slightly');
-    final icon = c >= 0 ? Icons.trending_up : Icons.trending_down;
-    final color = c >= 0 ? AppTheme.tertiary : AppTheme.secondary;
+    final howMuch =
+        mag >= 0.6 ? 'a lot' : (mag >= 0.3 ? 'a bit' : 'a little');
+    final positive = c >= 0;
+    final sentence = positive
+        ? 'On your brighter-mood days, you tend to get $howMuch more done.'
+        : 'Interestingly, your brighter-mood days line up with getting $howMuch less done.';
+    final icon = positive ? Icons.trending_up : Icons.trending_down;
+    final color = positive ? AppTheme.tertiary : AppTheme.secondary;
 
     return Container(
       padding: const EdgeInsets.all(12),
@@ -723,7 +1051,7 @@ class _TrendsInsightsScreenState extends State<TrendsInsightsScreen> {
           const SizedBox(width: 10),
           Expanded(
             child: Text(
-              'Your productivity $strength $direction your mood  (r = ${_fmt(c)})',
+              sentence,
               style: TextStyle(
                   fontSize: 13,
                   color: AppTheme.onSurface,
@@ -756,245 +1084,6 @@ class _TrendsInsightsScreenState extends State<TrendsInsightsScreen> {
     }
     if (dx == 0 || dy == 0) return null;
     return (num / math.sqrt(dx * dy)).clamp(-1.0, 1.0);
-  }
-
-  String _fmt(double c) => '${c >= 0 ? '+' : ''}${c.toStringAsFixed(2)}';
-
-  String _strengthLabel(double c) {
-    final mag = c.abs();
-    final dir = c >= 0 ? 'positive' : 'negative';
-    if (mag >= 0.6) return 'Strong $dir';
-    if (mag >= 0.3) return 'Moderate $dir';
-    if (mag >= 0.1) return 'Weak $dir';
-    return 'No clear link';
-  }
-
-  Widget _buildCorrelations(
-      List<LogEntry> logs, List<ProductivityRecord> productivityRecords) {
-    final recordMap = {for (var r in productivityRecords) r.date: r};
-
-    final sleepMoodX = <double>[], sleepMoodY = <double>[];
-    final sleepProdX = <double>[], sleepProdY = <double>[];
-    final moodProdX = <double>[], moodProdY = <double>[];
-
-    for (final log in logs) {
-      final hasSleep = log.sleepHours > 0;
-      final hasMood = log.moodScore > 0;
-      final rec = recordMap[_dayKey(log.date)];
-      final hasProd = rec != null;
-
-      if (hasSleep && hasMood) {
-        sleepMoodX.add(log.sleepHours);
-        sleepMoodY.add(log.moodScore);
-      }
-      if (hasSleep && hasProd) {
-        sleepProdX.add(log.sleepHours);
-        sleepProdY.add(rec.completionRate);
-      }
-      if (hasMood && hasProd) {
-        moodProdX.add(log.moodScore);
-        moodProdY.add(rec.completionRate);
-      }
-    }
-
-    final pairs = <({String a, String b, double? c})>[
-      (a: 'Sleep', b: 'Mood', c: _pearson(sleepMoodX, sleepMoodY)),
-      (a: 'Sleep', b: 'Productivity', c: _pearson(sleepProdX, sleepProdY)),
-      (a: 'Mood', b: 'Productivity', c: _pearson(moodProdX, moodProdY)),
-    ];
-
-    final hasAny = pairs.any((p) => p.c != null);
-    final sampleDays = sleepMoodX.length;
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text('How They Interact',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
-        const SizedBox(height: 16),
-        Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: AppTheme.borderDefault),
-            boxShadow: [
-              BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.05),
-                  blurRadius: 12,
-                  offset: const Offset(0, 4))
-            ],
-          ),
-          child: hasAny
-              ? Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    for (int i = 0; i < pairs.length; i++) ...[
-                      _buildCorrelationRow(pairs[i]),
-                      if (i < pairs.length - 1) const SizedBox(height: 18),
-                    ],
-                    const SizedBox(height: 20),
-                    Container(height: 1, color: AppTheme.borderDefault),
-                    const SizedBox(height: 16),
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Icon(Icons.auto_awesome,
-                            size: 18, color: AppTheme.primary),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            _correlationParagraph(pairs, sampleDays),
-                            style: const TextStyle(
-                                fontSize: 14,
-                                color: AppTheme.onSurfaceVariant,
-                                height: 1.5),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                )
-              : const Text(
-                  'Keep logging sleep, mood, and completing tasks for a few days to reveal how they interact.',
-                  style: TextStyle(color: AppTheme.outline),
-                ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildCorrelationRow(({String a, String b, double? c}) pair) {
-    final c = pair.c;
-    final label = c == null ? 'Not enough data' : _strengthLabel(c);
-    final valueColor = c == null
-        ? AppTheme.outline
-        : (c >= 0 ? AppTheme.primary : AppTheme.error);
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Text('${pair.a} ↔ ${pair.b}',
-                style: const TextStyle(
-                    fontSize: 14, fontWeight: FontWeight.w600)),
-            Text(c == null ? '—' : _fmt(c),
-                style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w700,
-                    color: valueColor)),
-          ],
-        ),
-        const SizedBox(height: 6),
-        _buildDivergingBar(c),
-        const SizedBox(height: 4),
-        Text(label,
-            style: const TextStyle(fontSize: 11, color: AppTheme.outline)),
-      ],
-    );
-  }
-
-  /// Center-anchored bar: negative fills left (red), positive fills right (primary).
-  Widget _buildDivergingBar(double? c) {
-    final v = (c ?? 0.0).clamp(-1.0, 1.0);
-    return SizedBox(
-      height: 10,
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Expanded(
-            child: Align(
-              alignment: Alignment.centerRight,
-              child: FractionallySizedBox(
-                widthFactor: v < 0 ? v.abs() : 0.0,
-                child: Container(
-                  decoration: const BoxDecoration(
-                    color: AppTheme.error,
-                    borderRadius:
-                        BorderRadius.horizontal(left: Radius.circular(5)),
-                  ),
-                ),
-              ),
-            ),
-          ),
-          Container(width: 2, color: AppTheme.borderDefault),
-          Expanded(
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: FractionallySizedBox(
-                widthFactor: v > 0 ? v : 0.0,
-                child: Container(
-                  decoration: const BoxDecoration(
-                    color: AppTheme.primary,
-                    borderRadius:
-                        BorderRadius.horizontal(right: Radius.circular(5)),
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// Deterministic, rule-based summary of the correlations — no AI model.
-  String _correlationParagraph(
-      List<({String a, String b, double? c})> pairs, int sampleDays) {
-    final valid = pairs.where((p) => p.c != null).toList()
-      ..sort((x, y) => y.c!.abs().compareTo(x.c!.abs()));
-
-    if (valid.isEmpty) {
-      return 'Keep logging to reveal how your sleep, mood, and productivity move together.';
-    }
-
-    String clause(({String a, String b, double? c}) p) {
-      final c = p.c!;
-      final mag = c.abs();
-      final adverb =
-          mag >= 0.6 ? 'strongly' : (mag >= 0.3 ? 'moderately' : 'only weakly');
-      final a = p.a.toLowerCase();
-      final b = p.b.toLowerCase();
-      return c >= 0
-          ? '$a and $b $adverb rise and fall together (${_fmt(c)})'
-          : '$a and $b $adverb move in opposite directions (${_fmt(c)})';
-    }
-
-    final clauses = valid.map(clause).toList();
-    final String body;
-    if (clauses.length == 1) {
-      body = clauses[0];
-    } else {
-      body =
-          '${clauses.sublist(0, clauses.length - 1).join('; ')}; and ${clauses.last}';
-    }
-
-    // Actionable tip from the strongest relationship.
-    final top = valid.first;
-    final tc = top.c!;
-    String tip;
-    if (tc.abs() < 0.3) {
-      tip =
-          'None of these links are strong yet — a few more days of logging will sharpen the picture.';
-    } else if (top.a == 'Sleep' && top.b == 'Mood') {
-      tip = tc >= 0
-          ? 'Protecting your sleep looks like your clearest lever for a better mood.'
-          : 'Longer nights are lining up with lower moods — worth watching for oversleeping on rough days.';
-    } else if (top.b == 'Productivity') {
-      tip = tc >= 0
-          ? 'On days your ${top.a.toLowerCase()} is higher, you tend to finish more of your tasks.'
-          : 'Higher ${top.a.toLowerCase()} is coinciding with fewer tasks done — an interesting pattern to reflect on.';
-    } else {
-      tip = 'This is the pattern worth paying the most attention to.';
-    }
-
-    final dayWord = sampleDays == 1 ? 'day' : 'days';
-    final lead = sampleDays >= 3
-        ? 'Across your $sampleDays logged $dayWord, '
-        : 'From your recent logs, ';
-    return '$lead$body. $tip';
   }
 
   Widget _buildMiniBarSection({
@@ -1057,232 +1146,6 @@ class _TrendsInsightsScreenState extends State<TrendsInsightsScreen> {
           ),
         ),
       ],
-    );
-  }
-
-  // ══════════════════════════════ DEEP INSIGHTS ══════════════════════════════
-
-  Widget _buildDeepInsights(List<LogEntry> logs, List<ProductivityRecord> productivityRecords) {
-    final validLogs = logs.where((l) => l.sleepHours > 0 && l.moodScore > 0).toList();
-    if (validLogs.length < 3) {
-      return _buildEmptyPlaceholder(
-        icon: Icons.insights_outlined,
-        title: 'Deep Insights',
-        message: 'Log sleep and mood for 3+ days to unlock deep insights.',
-      );
-    }
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text('Deep Insights', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
-        const SizedBox(height: 16),
-        _buildSleepMoodCard(validLogs),
-        const SizedBox(height: 16),
-        _buildMoodProductivityCard(logs, productivityRecords),
-      ],
-    );
-  }
-
-  Widget _buildSleepMoodCard(List<LogEntry> logs) {
-    final n = logs.length.toDouble();
-    final avgSleep = logs.map((l) => l.sleepHours).reduce((a, b) => a + b) / n;
-    final avgMood = logs.map((l) => l.moodScore).reduce((a, b) => a + b) / n;
-
-    // Pearson correlation
-    double num = 0, denX = 0, denY = 0;
-    for (final l in logs) {
-      num += (l.sleepHours - avgSleep) * (l.moodScore - avgMood);
-      denX += (l.sleepHours - avgSleep) * (l.sleepHours - avgSleep);
-      denY += (l.moodScore - avgMood) * (l.moodScore - avgMood);
-    }
-    final corr = (denX > 0 && denY > 0)
-        ? (num / math.sqrt(denX * denY)).clamp(-1.0, 1.0)
-        : 0.0;
-
-    final goodSleepLogs = logs.where((l) => l.sleepHours >= 7).toList();
-    final moodLiftPct = goodSleepLogs.isNotEmpty
-        ? ((goodSleepLogs.map((l) => l.moodScore).reduce((a, b) => a + b) / goodSleepLogs.length - avgMood) / avgMood * 100).abs()
-        : 0.0;
-
-    final corrLabel = corr >= 0.5
-        ? 'Positive Correlation (${corr.toStringAsFixed(2)})'
-        : corr <= -0.5
-            ? 'Negative Correlation (${corr.toStringAsFixed(2)})'
-            : 'Weak Correlation (${corr.toStringAsFixed(2)})';
-
-    final insightText = goodSleepLogs.isNotEmpty && moodLiftPct > 5
-        ? 'On days following 7+ hours of quality sleep, your self-reported mood improves by an average of ${moodLiftPct.toInt()}%.'
-        : 'Keep logging daily to uncover how your sleep affects your mood.';
-
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppTheme.borderDefault),
-        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 12, offset: const Offset(0, 4))],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('Sleep Quality vs. Mood',
-                      style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: AppTheme.primary)),
-                  const SizedBox(height: 2),
-                  Text(corrLabel, style: const TextStyle(fontSize: 12, color: AppTheme.outline)),
-                ],
-              ),
-              const Icon(Icons.insights, color: AppTheme.primary),
-            ],
-          ),
-          const SizedBox(height: 16),
-          Container(
-            height: 140,
-            decoration: BoxDecoration(
-              color: AppTheme.surfaceContainer,
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(8),
-              child: CustomPaint(
-                painter: _ScatterPlotPainter(logs: logs, color: AppTheme.primary),
-                child: const SizedBox.expand(),
-              ),
-            ),
-          ),
-          const SizedBox(height: 6),
-          const Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text('Poor Sleep', style: TextStyle(fontSize: 10, color: AppTheme.outline)),
-              Text('Great Sleep', style: TextStyle(fontSize: 10, color: AppTheme.outline)),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Text(insightText,
-              style: const TextStyle(fontSize: 14, color: AppTheme.onSurfaceVariant, height: 1.4)),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildMoodProductivityCard(List<LogEntry> logs, List<ProductivityRecord> productivityRecords) {
-    if (productivityRecords.isEmpty) {
-      return _buildEmptyPlaceholder(
-        icon: Icons.link_outlined,
-        title: 'Mood ↔ Productivity',
-        message:
-            'Complete some tasks across a few days to see how your mood relates to what you get done.',
-      );
-    }
-
-    final recordMap = {for (var r in productivityRecords) r.date: r};
-    final lowRates = <double>[], stableRates = <double>[], highRates = <double>[];
-
-    for (final log in logs) {
-      if (log.moodScore == 0) continue;
-      final key = '${log.date.year}-${log.date.month.toString().padLeft(2, '0')}-${log.date.day.toString().padLeft(2, '0')}';
-      final rec = recordMap[key];
-      if (rec == null) continue;
-      if (log.moodScore < 5) {
-        lowRates.add(rec.completionRate);
-      } else if (log.moodScore <= 7) {
-        stableRates.add(rec.completionRate);
-      } else {
-        highRates.add(rec.completionRate);
-      }
-    }
-
-    final lowAvg = lowRates.isEmpty ? 0.0 : lowRates.reduce((a, b) => a + b) / lowRates.length;
-    final stableAvg = stableRates.isEmpty ? 0.0 : stableRates.reduce((a, b) => a + b) / stableRates.length;
-    final highAvg = highRates.isEmpty ? 0.0 : highRates.reduce((a, b) => a + b) / highRates.length;
-
-    final lowPct = (lowAvg * 100).toInt();
-    final stablePct = (stableAvg * 100).toInt();
-    final highPct = (highAvg * 100).toInt();
-
-    final basePct = lowPct > 0 ? lowPct : stablePct;
-    final insightText = highPct > 0 && basePct >= 0
-        ? 'A "Positive" mood state is the strongest predictor for completing your daily goals. Task completion jumps from $basePct% to $highPct% when mood is elevated.'
-        : 'Keep logging mood and completing tasks to uncover this pattern.';
-
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppTheme.borderDefault),
-        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 12, offset: const Offset(0, 4))],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('Mood vs. Productivity',
-                      style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: AppTheme.tertiary)),
-                  const SizedBox(height: 2),
-                  const Text('High Impact Coupling', style: TextStyle(fontSize: 12, color: AppTheme.outline)),
-                ],
-              ),
-              const Icon(Icons.trending_up, color: AppTheme.tertiary),
-            ],
-          ),
-          const SizedBox(height: 16),
-          Row(
-            children: [
-              _buildMoodProdBar('Low Mood', lowAvg, AppTheme.secondary.withValues(alpha: 0.3)),
-              const SizedBox(width: 8),
-              _buildMoodProdBar('Stable', stableAvg, AppTheme.secondary.withValues(alpha: 0.55)),
-              const SizedBox(width: 8),
-              _buildMoodProdBar('High Mood', highAvg, AppTheme.tertiaryContainer),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Text(insightText,
-              style: const TextStyle(fontSize: 14, color: AppTheme.onSurfaceVariant, height: 1.4)),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildMoodProdBar(String label, double completionRate, Color color) {
-    const maxBarHeight = 80.0;
-    final barHeight = math.max(4.0, maxBarHeight * completionRate.clamp(0.0, 1.0));
-    return Expanded(
-      child: Column(
-        children: [
-          SizedBox(
-            height: maxBarHeight,
-            child: Align(
-              alignment: Alignment.bottomCenter,
-              child: Container(
-                height: barHeight,
-                decoration: BoxDecoration(
-                  color: color,
-                  borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(label,
-              textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 10, color: AppTheme.outline)),
-        ],
-      ),
     );
   }
 
@@ -1401,86 +1264,69 @@ class _TrendsInsightsScreenState extends State<TrendsInsightsScreen> {
 
 // ══════════════════════════════ CUSTOM PAINTERS ══════════════════════════════
 
-class _ScatterPlotPainter extends CustomPainter {
-  final List<LogEntry> logs;
-  final Color color;
+/// Overlays several 0..1 series as gap-aware polylines with dots. Points sit at
+/// slot centres so they line up with the centred day labels beneath the chart.
+class _TriLinePainter extends CustomPainter {
+  final List<List<double?>> series;
+  final List<Color> colors;
 
-  const _ScatterPlotPainter({required this.logs, required this.color});
+  _TriLinePainter({required this.series, required this.colors});
 
   @override
   void paint(Canvas canvas, Size size) {
-    if (logs.isEmpty) return;
+    final n = series.isEmpty ? 0 : series.first.length;
+    if (n == 0) return;
+    final slot = size.width / n;
+    double xFor(int i) => (i + 0.5) * slot;
+    double yFor(double v) => size.height * (1 - v.clamp(0.0, 1.0));
 
-    const pad = 14.0;
-    final w = size.width - pad * 2;
-    final h = size.height - pad * 2;
-
-    final minSleep = logs.map((l) => l.sleepHours).reduce(math.min);
-    final maxSleep = logs.map((l) => l.sleepHours).reduce(math.max);
-    final sleepRange = (maxSleep - minSleep).clamp(1.0, double.infinity);
-
-    // Regression line
-    final n = logs.length.toDouble();
-    double sumX = 0, sumY = 0, sumXY = 0, sumX2 = 0;
-    for (final l in logs) {
-      final x = (l.sleepHours - minSleep) / sleepRange;
-      final y = 1.0 - (l.moodScore / 10.0);
-      sumX += x; sumY += y; sumXY += x * y; sumX2 += x * x;
-    }
-    final denom = (n * sumX2 - sumX * sumX);
-    if (denom.abs() > 0.0001) {
-      final slope = (n * sumXY - sumX * sumY) / denom;
-      final intercept = (sumY - slope * sumX) / n;
-
-      final linePaint = Paint()
-        ..color = color.withValues(alpha: 0.5)
-        ..strokeWidth = 1.2
-        ..style = PaintingStyle.stroke;
-
-      final x0 = pad;
-      final y0 = (pad + intercept * h).clamp(pad, pad + h);
-      final x1 = pad + w;
-      final y1 = (pad + (slope + intercept) * h).clamp(pad, pad + h);
-
-      _drawDashedLine(canvas, Offset(x0, y0), Offset(x1, y1), linePaint);
+    final grid = Paint()
+      ..color = const Color(0x0F000000)
+      ..strokeWidth = 1;
+    for (int g = 0; g <= 4; g++) {
+      final y = size.height * g / 4;
+      canvas.drawLine(Offset(0, y), Offset(size.width, y), grid);
     }
 
-    // Dots — sort by date so recent logs are drawn on top
-    final sorted = List<LogEntry>.from(logs)..sort((a, b) => a.date.compareTo(b.date));
-    final dotPaint = Paint()..style = PaintingStyle.fill;
-    for (int i = 0; i < sorted.length; i++) {
-      final l = sorted[i];
-      final x = pad + ((l.sleepHours - minSleep) / sleepRange) * w;
-      final y = pad + (1.0 - l.moodScore / 10.0) * h;
-      final opacity = 0.3 + (i / sorted.length) * 0.7;
-      canvas.drawCircle(Offset(x, y), 4, dotPaint..color = color.withValues(alpha: opacity));
-    }
-  }
+    for (int s = 0; s < series.length; s++) {
+      final vals = series[s];
+      final line = Paint()
+        ..color = colors[s]
+        ..strokeWidth = 2.5
+        ..style = PaintingStyle.stroke
+        ..strokeCap = StrokeCap.round
+        ..strokeJoin = StrokeJoin.round;
+      final dot = Paint()
+        ..color = colors[s]
+        ..style = PaintingStyle.fill;
 
-  void _drawDashedLine(Canvas canvas, Offset p1, Offset p2, Paint paint) {
-    const dashLen = 6.0, gapLen = 4.0;
-    final dx = p2.dx - p1.dx;
-    final dy = p2.dy - p1.dy;
-    final len = math.sqrt(dx * dx + dy * dy);
-    if (len == 0) return;
-    final ux = dx / len, uy = dy / len;
-    double dist = 0;
-    bool drawing = true;
-    while (dist < len) {
-      final seg = math.min(drawing ? dashLen : gapLen, len - dist);
-      final end = dist + seg;
-      if (drawing) {
-        canvas.drawLine(
-          Offset(p1.dx + ux * dist, p1.dy + uy * dist),
-          Offset(p1.dx + ux * end, p1.dy + uy * end),
-          paint,
-        );
+      var run = <Offset>[];
+      void flush() {
+        if (run.length >= 2) {
+          final p = Path()..moveTo(run.first.dx, run.first.dy);
+          for (int k = 1; k < run.length; k++) {
+            p.lineTo(run[k].dx, run[k].dy);
+          }
+          canvas.drawPath(p, line);
+        }
+        run = [];
       }
-      dist += seg;
-      drawing = !drawing;
+
+      for (int i = 0; i < n; i++) {
+        final v = vals[i];
+        if (v == null) {
+          flush();
+          continue;
+        }
+        final o = Offset(xFor(i), yFor(v));
+        run.add(o);
+        canvas.drawCircle(o, 3, dot);
+      }
+      flush();
     }
   }
 
   @override
-  bool shouldRepaint(_ScatterPlotPainter old) => old.logs != logs || old.color != color;
+  bool shouldRepaint(_TriLinePainter old) =>
+      old.series != series || old.colors != colors;
 }

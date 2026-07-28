@@ -15,6 +15,13 @@ service cloud.firestore {
       );
     }
 
+    // ── Private Profile (PII) ─────────────────────────────────────────────────
+    // Owner-only personal details (birth date, phone). Unlike `users`, this doc
+    // is never readable by other users — this is what keeps PII private.
+    match /privateProfile/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+
     // ── Friend Requests ───────────────────────────────────────────────────────
     match /friendRequests/{requestId} {
       allow read: if request.auth != null && (
@@ -81,7 +88,7 @@ service cloud.firestore {
         (resource == null || resource.data.userId == request.auth.uid);
     }
 
-    // ── In-App Notifications (FR_902, FR_903) ─────────────────────────────────
+    // ── In-App Notifications (FR_904) ─────────────────────────────────────────
     // Any authenticated user can create a notification (so accepting a friend
     // request can write a notification for the other party).
     // Only the recipient can read, update (mark as read), or delete.

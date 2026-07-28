@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../theme.dart';
 import '../models/models.dart';
+import '../utils/image_helpers.dart';
 import '../screens/notifications_screen.dart';
+import '../screens/profile_tab.dart';
 
 /// Shared page header used across tabs: avatar (or custom leading) + title/date + notification bell.
 class AppPageHeader extends StatelessWidget {
@@ -30,7 +32,12 @@ class AppPageHeader extends StatelessWidget {
       children: [
         Row(
           children: [
-            leadingWidget ?? _buildAvatar(),
+            // Tapping the leading element opens Profile/Settings — consistent
+            // entry point available from every tab that uses this header.
+            GestureDetector(
+              onTap: () => ProfileScreen.open(context),
+              child: leadingWidget ?? _buildAvatar(),
+            ),
             const SizedBox(width: 12),
             Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -82,14 +89,11 @@ class AppPageHeader extends StatelessWidget {
       ),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(22),
-        child: avatarUrl != null && avatarUrl.isNotEmpty
-            ? Image.network(
-                avatarUrl,
-                fit: BoxFit.cover,
-                errorBuilder: (_, _, _) =>
-                    const Icon(Icons.person, color: AppTheme.outline),
-              )
-            : const Icon(Icons.person, color: AppTheme.outline),
+        child: storedImage(
+          avatarUrl ?? '',
+          fit: BoxFit.cover,
+          fallback: const Icon(Icons.person, color: AppTheme.outline),
+        ),
       ),
     );
   }

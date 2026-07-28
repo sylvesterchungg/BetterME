@@ -4,6 +4,8 @@ import 'package:provider/provider.dart';
 import '../models/models.dart';
 import '../providers/app_provider.dart';
 import '../theme.dart';
+import '../utils/stats.dart';
+import '../widgets/app_page_header.dart';
 
 // Symptom options shown in the Track Symptoms chip row
 const _kSymptoms = [
@@ -54,6 +56,13 @@ class _DailyLogTabState extends State<DailyLogTab> {
   int _sleepQuality = 0; // 0 = unset; 2,4,6,8,10 for Restless→Deep
   bool _hadNightmare = false;
 
+  // Sleep input method: 'hours' = drag the slider; 'time' = pick bedtime +
+  // wake-up and derive the hours. Compute-only — the times themselves are not
+  // persisted; they just fill _sleepHours (the value that gets saved).
+  String _sleepInputMode = 'hours';
+  TimeOfDay _bedtime = const TimeOfDay(hour: 23, minute: 0);
+  TimeOfDay _wakeTime = const TimeOfDay(hour: 7, minute: 0);
+
   // ── Date navigation ───────────────────────────────────
   DateTime _selectedDate = DateTime.now();
 
@@ -68,6 +77,15 @@ class _DailyLogTabState extends State<DailyLogTab> {
   String _loadedForDate = '';
   double _prevMoodScore = 0.0;
   double _prevSleepHours = 0.0;
+  // Set by any real field edit (see the setState calls below marked with a
+  // matching comment). If the Firestore logs stream is still empty when this
+  // tab first mounts (e.g. IndexedStack mounts every tab right at login,
+  // before the first snapshot arrives) and the user starts filling the form
+  // before that snapshot lands, build()'s auto-load would otherwise overwrite
+  // their in-progress selections with whatever was previously saved. This
+  // flag makes that auto-load a no-op once the user has actually touched
+  // something, instead of just racing on arrival timing.
+  bool _userHasEditedForDate = false;
 
   @override
   void dispose() {
@@ -110,6 +128,7 @@ class _DailyLogTabState extends State<DailyLogTab> {
     setState(() {
       _selectedDate = candidate;
       _loadedForDate = '';
+      _userHasEditedForDate = false;
       _prevMoodScore = 0.0;
       _prevSleepHours = 0.0;
       // Reset form fields to defaults before loading new date
@@ -124,6 +143,9 @@ class _DailyLogTabState extends State<DailyLogTab> {
       _sleepHours = 7.0;
       _sleepQuality = 0;
       _hadNightmare = false;
+      _sleepInputMode = 'hours';
+      _bedtime = const TimeOfDay(hour: 23, minute: 0);
+      _wakeTime = const TimeOfDay(hour: 7, minute: 0);
     });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _loadValuesForDate(provider, candidate);
@@ -189,6 +211,14 @@ class _DailyLogTabState extends State<DailyLogTab> {
   Future<void> _saveLog() async {
     final provider = context.read<AppProvider>();
 
+    try {
+      await _doSaveLog(provider);
+    } catch (e) {
+      _showErrorSnackbar();
+    }
+  }
+
+  Future<void> _doSaveLog(AppProvider provider) async {
     if (_logMode == 'mood') {
       final newScore = _moodScore.clamp(1.0, 10.0);
       final prevForDisplay = _prevMoodScore;
@@ -256,6 +286,17 @@ class _DailyLogTabState extends State<DailyLogTab> {
     );
   }
 
+  void _showErrorSnackbar() {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: const Text('Could not save — check your connection and try again.'),
+        backgroundColor: AppTheme.error,
+        action: SnackBarAction(label: 'Retry', textColor: Colors.white, onPressed: _saveLog),
+      ),
+    );
+  }
+
   // ═══════════════════════════════════════════════════════════════════════
   //  BUILD
   // ═══════════════════════════════════════════════════════════════════════
@@ -263,7 +304,9 @@ class _DailyLogTabState extends State<DailyLogTab> {
   @override
   Widget build(BuildContext context) {
     final provider = context.watch<AppProvider>();
-    if (_loadedForDate != _dateKey && provider.logs.isNotEmpty) {
+    if (_loadedForDate != _dateKey &&
+        provider.logs.isNotEmpty &&
+        !_userHasEditedForDate) {
       _loadedForDate = _dateKey;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _loadValuesForDate(provider, _selectedDate);
@@ -276,6 +319,8 @@ class _DailyLogTabState extends State<DailyLogTab> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            AppPageHeader(title: 'Daily Log', user: provider.currentUser),
+            const SizedBox(height: 24),
             _buildDateNav(provider),
             const SizedBox(height: 12),
             _buildModeToggle(),
@@ -435,6 +480,7 @@ class _DailyLogTabState extends State<DailyLogTab> {
     final isSelected = _selectedMoodEmoji == id;
     return GestureDetector(
       onTap: () => setState(() {
+        _userHasEditedForDate = true;
         _selectedMoodEmoji = id;
         _moodScore = defaultScore;
       }),
@@ -492,6 +538,7 @@ class _DailyLogTabState extends State<DailyLogTab> {
           inactiveColor: AppTheme.surfaceContainer,
           onChanged: (value) {
             setState(() {
+              _userHasEditedForDate = true;
               _moodScore = value;
               if (value <= 2.0) {
                 _selectedMoodEmoji = 'awful';
@@ -567,6 +614,7 @@ class _DailyLogTabState extends State<DailyLogTab> {
     final isSelected = _selectedActivities.contains(label);
     return GestureDetector(
       onTap: () => setState(() {
+        _userHasEditedForDate = true;
         if (isSelected) {
           _selectedActivities.remove(label);
           if (isOthers) {
@@ -628,6 +676,7 @@ class _DailyLogTabState extends State<DailyLogTab> {
                 padding: const EdgeInsets.only(right: 10),
                 child: GestureDetector(
                   onTap: () => setState(() {
+                    _userHasEditedForDate = true;
                     if (isSelected) {
                       _selectedSymptoms.remove(s.name);
                     } else {
@@ -714,7 +763,10 @@ class _DailyLogTabState extends State<DailyLogTab> {
         final isActive = i < _symptomSeverity;
         return Expanded(
           child: GestureDetector(
-            onTap: () => setState(() => _symptomSeverity = i + 1),
+            onTap: () => setState(() {
+              _userHasEditedForDate = true;
+              _symptomSeverity = i + 1;
+            }),
             child: Padding(
               padding: EdgeInsets.only(right: i < 4 ? 4 : 0),
               child: AnimatedContainer(
@@ -742,7 +794,14 @@ class _DailyLogTabState extends State<DailyLogTab> {
       children: [
         const Text('Sleep Log', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w600)),
         const SizedBox(height: 8),
-        const Text('How many hours did you sleep?', style: TextStyle(fontSize: 14, color: AppTheme.onSurfaceVariant)),
+        Text(
+          _sleepInputMode == 'hours'
+              ? 'How many hours did you sleep?'
+              : 'When did you go to sleep and wake up?',
+          style: const TextStyle(fontSize: 14, color: AppTheme.onSurfaceVariant),
+        ),
+        const SizedBox(height: 20),
+        _buildSleepInputModeToggle(),
         const SizedBox(height: 24),
         Center(
           child: Column(
@@ -776,32 +835,41 @@ class _DailyLogTabState extends State<DailyLogTab> {
           ),
         ),
         const SizedBox(height: 24),
-        SliderTheme(
-          data: SliderTheme.of(context).copyWith(
-            trackHeight: 4,
-            thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 8),
-            overlayShape: const RoundSliderOverlayShape(overlayRadius: 16),
+        if (_sleepInputMode == 'hours') ...[
+          SliderTheme(
+            data: SliderTheme.of(context).copyWith(
+              trackHeight: 4,
+              thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 8),
+              overlayShape: const RoundSliderOverlayShape(overlayRadius: 16),
+            ),
+            child: Slider(
+              // Sleep computed from bedtime/wake-up (time mode) can exceed the
+              // 12h slider max, so clamp the *displayed* value to the slider's
+              // range. The full value is still what gets saved.
+              value: _sleepHours.clamp(0.0, 12.0),
+              min: 0.0,
+              max: 12.0,
+              divisions: 48,
+              activeColor: AppTheme.primary,
+              inactiveColor: AppTheme.surfaceContainer,
+              onChanged: (value) => setState(() {
+                _userHasEditedForDate = true;
+                _sleepHours = value;
+              }),
+            ),
           ),
-          child: Slider(
-            value: _sleepHours,
-            min: 0.0,
-            max: 12.0,
-            divisions: 48,
-            activeColor: AppTheme.primary,
-            inactiveColor: AppTheme.surfaceContainer,
-            onChanged: (value) => setState(() => _sleepHours = value),
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 16),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text('0h', style: TextStyle(fontSize: 12, color: AppTheme.outline)),
+                Text('12h', style: TextStyle(fontSize: 12, color: AppTheme.outline)),
+              ],
+            ),
           ),
-        ),
-        const Padding(
-          padding: EdgeInsets.symmetric(horizontal: 16),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text('0h', style: TextStyle(fontSize: 12, color: AppTheme.outline)),
-              Text('12h', style: TextStyle(fontSize: 12, color: AppTheme.outline)),
-            ],
-          ),
-        ),
+        ] else
+          _buildSleepTimePickers(),
         const SizedBox(height: 32),
         _buildSleepQualitySection(),
         const SizedBox(height: 32),
@@ -836,6 +904,134 @@ class _DailyLogTabState extends State<DailyLogTab> {
     );
   }
 
+  // ─────────────────── SLEEP INPUT: HOURS vs TIME ───────────────────────
+
+  // Recompute the saved hours from the currently-picked bedtime and wake-up.
+  void _syncSleepHoursFromTime() {
+    _sleepHours = sleepHoursBetween(
+      _bedtime.hour, _bedtime.minute, _wakeTime.hour, _wakeTime.minute,
+    ).clamp(0.0, 24.0);
+  }
+
+  Future<void> _pickTime({required bool isBedtime}) async {
+    final picked = await showTimePicker(
+      context: context,
+      initialTime: isBedtime ? _bedtime : _wakeTime,
+    );
+    if (picked == null || !mounted) return;
+    setState(() {
+      _userHasEditedForDate = true;
+      if (isBedtime) {
+        _bedtime = picked;
+      } else {
+        _wakeTime = picked;
+      }
+      _syncSleepHoursFromTime();
+    });
+  }
+
+  Widget _buildSleepInputModeToggle() {
+    return Container(
+      decoration: BoxDecoration(color: AppTheme.surfaceContainer, borderRadius: BorderRadius.circular(50)),
+      padding: const EdgeInsets.all(4),
+      child: Row(
+        children: [
+          (label: 'By hours', mode: 'hours'),
+          (label: 'By time', mode: 'time'),
+        ].map((opt) {
+          final isActive = _sleepInputMode == opt.mode;
+          return Expanded(
+            child: GestureDetector(
+              onTap: () => setState(() {
+                _userHasEditedForDate = true;
+                _sleepInputMode = opt.mode;
+                // Entering time mode: make the saved hours match what the
+                // pickers currently show, so the readout and the value agree.
+                if (opt.mode == 'time') _syncSleepHoursFromTime();
+              }),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                padding: const EdgeInsets.symmetric(vertical: 10),
+                decoration: BoxDecoration(
+                  color: isActive ? Colors.white : Colors.transparent,
+                  borderRadius: BorderRadius.circular(50),
+                  boxShadow: isActive
+                      ? [BoxShadow(color: Colors.black.withValues(alpha: 0.08), blurRadius: 4)]
+                      : [],
+                ),
+                alignment: Alignment.center,
+                child: Text(
+                  opt.label,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: isActive ? FontWeight.w600 : FontWeight.w500,
+                    color: isActive ? AppTheme.primary : AppTheme.onSurfaceVariant,
+                  ),
+                ),
+              ),
+            ),
+          );
+        }).toList(),
+      ),
+    );
+  }
+
+  Widget _buildSleepTimePickers() {
+    return Column(
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: _buildTimeField('Bedtime', Icons.bedtime_outlined, _bedtime,
+                  () => _pickTime(isBedtime: true)),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: _buildTimeField('Wake up', Icons.wb_sunny_outlined, _wakeTime,
+                  () => _pickTime(isBedtime: false)),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        Text(
+          'Tap a time to change it — hours are calculated for you.',
+          style: TextStyle(fontSize: 12, color: AppTheme.outline.withValues(alpha: 0.9)),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildTimeField(String label, IconData icon, TimeOfDay time, VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: AppTheme.borderDefault),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(icon, size: 16, color: AppTheme.primary),
+                const SizedBox(width: 6),
+                Text(label, style: const TextStyle(fontSize: 12, color: AppTheme.onSurfaceVariant)),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              time.format(context),
+              style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w600, color: AppTheme.onSurface),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   // ─────────────────── SLEEP QUALITY (segmented pill bar) ────────────────
 
   Widget _buildSleepQualitySection() {
@@ -867,7 +1063,10 @@ class _DailyLogTabState extends State<DailyLogTab> {
               final isSelected = selectedIdx == i;
               return Expanded(
                 child: GestureDetector(
-                  onTap: () => setState(() => _sleepQuality = (i + 1) * 2),
+                  onTap: () => setState(() {
+                    _userHasEditedForDate = true;
+                    _sleepQuality = (i + 1) * 2;
+                  }),
                   child: AnimatedContainer(
                     duration: const Duration(milliseconds: 200),
                     padding: const EdgeInsets.symmetric(vertical: 10),
@@ -921,7 +1120,10 @@ class _DailyLogTabState extends State<DailyLogTab> {
   Widget _buildDreamChoice(bool value, IconData icon, String label, Color color) {
     final isSelected = _hadNightmare == value;
     return GestureDetector(
-      onTap: () => setState(() => _hadNightmare = value),
+      onTap: () => setState(() {
+        _userHasEditedForDate = true;
+        _hadNightmare = value;
+      }),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
         padding: const EdgeInsets.symmetric(vertical: 16),

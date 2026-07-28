@@ -19,26 +19,11 @@ class MainScreen extends StatefulWidget {
 class _MainScreenState extends State<MainScreen> {
   int _currentIndex = 0;
 
-  // Tracks the avatar URL already warmed into the image cache so we only
-  // precache once per URL change instead of on every rebuild.
-  String? _preloadedAvatarUrl;
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    _preloadAvatar();
-  }
-
-  // Preload the user's avatar into Flutter's image cache as soon as it's
-  // available, so the Profile/Dashboard/Friends tabs show it instantly
-  // instead of fetching over the network when first opened.
-  void _preloadAvatar() {
-    final url = Provider.of<AppProvider>(context).currentUser?.avatarUrl;
-    if (url == null || url.isEmpty || url == _preloadedAvatarUrl) return;
-    _preloadedAvatarUrl = url;
-    precacheImage(NetworkImage(url), context);
-  }
-
+  // NOTE: MainScreen deliberately does NOT listen to AppProvider. It used to
+  // (to precache the avatar), which rebuilt this whole Scaffold on every
+  // provider notification. Base64 avatars render instantly, so precaching is
+  // unnecessary — and keeping the Scaffold stable avoids disturbing SnackBars
+  // hosted above it.
   final List<Widget> _tabs = [
     const DashboardTab(),
     const TrendsInsightsScreen(),
@@ -51,7 +36,17 @@ class _MainScreenState extends State<MainScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: _tabs[_currentIndex],
+      // IndexedStack (not a plain widget swap) keeps every tab mounted, so
+      // in-progress state — an unsaved Log-tab draft, journal text, scroll
+      // position — survives switching tabs and back instead of being
+      // silently discarded when the outgoing tab's State was disposed.
+      // _AiConsentGate is the one narrowly-scoped exception to "MainScreen
+      // doesn't watch AppProvider" above — it renders nothing and only
+      // itself rebuilds, so the tab content's stability is unaffected.
+      body: Stack(children: [
+        IndexedStack(index: _currentIndex, children: _tabs),
+        const _AiConsentGate(),
+      ]),
       bottomNavigationBar: Container(
         decoration: const BoxDecoration(
           color: Colors.white,
@@ -88,6 +83,67 @@ class _MainScreenState extends State<MainScreen> {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// Invisible gate that asks for AI-processing consent exactly once per
+/// account (FR_1004-equivalent) — [User.aiInsightsEnabled] starts `null`
+/// ("never asked"), and no AI call ever fires until it's `true` (see
+/// AppProvider.ensureMorningNudge / TrendsInsightsScreen's consent gate).
+class _AiConsentGate extends StatefulWidget {
+  const _AiConsentGate();
+
+  @override
+  State<_AiConsentGate> createState() => _AiConsentGateState();
+}
+
+class _AiConsentGateState extends State<_AiConsentGate> {
+  bool _asked = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final user = context.watch<AppProvider>().currentUser;
+    if (!_asked && user != null && user.aiInsightsEnabled == null) {
+      _asked = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _showConsentDialog();
+      });
+    }
+    return const SizedBox.shrink();
+  }
+
+  void _showConsentDialog() {
+    final provider = context.read<AppProvider>();
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('AI Insights'),
+        content: const Text(
+          "BetterME can use Google's Gemini AI to turn your last 7 days of "
+          "mood, sleep, symptoms and task data into a plain-language "
+          "insight, a morning tip, and coping suggestions on hard days. "
+          "That data is sent to Google to generate them.\n\n"
+          "You can change this anytime in Profile > AI Insights.",
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              provider.setAiInsightsEnabled(false);
+              Navigator.of(dialogContext).pop();
+            },
+            child: const Text('Not now'),
+          ),
+          FilledButton(
+            onPressed: () {
+              provider.setAiInsightsEnabled(true);
+              Navigator.of(dialogContext).pop();
+            },
+            child: const Text('Enable AI Insights'),
+          ),
+        ],
       ),
     );
   }

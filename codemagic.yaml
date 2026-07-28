@@ -1,0 +1,100 @@
+# Codemagic CI — builds an UNSIGNED .ipa for sideloading via AltStore / SideStore.
+#
+# Mirrors .github/workflows/ios-build.yml, but on Codemagic's free tier
+# (500 macOS build-minutes/month) instead of GitHub Actions' 10x-billed macOS
+# minutes. Used as the fallback when the GitHub allowance runs out.
+#
+# BEFORE THE FIRST BUILD, in the Codemagic UI:
+#   1. Add this repo as an application (GitHub App integration).
+#   2. Create an environment variable group named `gemini` containing
+#      GEMINI_API_KEY, marked Secure. Without it the build still succeeds --
+#      api_keys.dart falls back to the placeholder and AI insights stay off.
+#   3. Set the workflow's email recipient below, or delete the publishing block.
+#
+# There is deliberately no `triggering:` section -- builds are manual only, so a
+# push can't silently eat the monthly minute allowance.
+
+workflows:
+  ios-unsigned:
+    name: BetterME iOS (unsigned IPA)
+    instance_type: mac_mini_m2
+    max_build_duration: 60
+
+    # The Flutter app lives in the betterme/ subfolder, not the repo root.
+    working_directory: betterme
+
+    environment:
+      # `stable` matches what the GitHub workflow used. Pin to an exact version
+      # (e.g. 3.44.1, which is what this project is developed against) if a
+      # stable-channel bump ever breaks the build.
+      flutter: stable
+      # Firebase's iOS SDK is Swift 6 -- needs Xcode 16+. `latest` satisfies that.
+      xcode: latest
+      cocoapods: default
+      groups:
+        - gemini      # supplies GEMINI_API_KEY (see step 2 above)
+
+    cache:
+      cache_paths:
+        - $HOME/.pub-cache
+        - $HOME/Library/Caches/CocoaPods
+
+    scripts:
+      # Firebase's Swift Package Manager path breaks on CI with an rsync error
+      # copying prebuilt frameworks into build/ios/SourcePackages/. Force the
+      # proven CocoaPods path. This is a global flutter setting, so it has to run
+      # before pub get / build ios.
+      - name: Use CocoaPods instead of Swift Package Manager
+        script: |
+          flutter config --no-enable-swift-package-manager
+          flutter config
+
+      - name: Install Dart/Flutter dependencies
+        script: flutter pub get
+
+      # lib/config/api_keys.dart is gitignored (it holds the Gemini key), so it is
+      # absent on CI and the Dart compile fails with "Undefined name 'ApiKeys'".
+      # Recreate it from the secure env var, falling back to the placeholder that
+      # the app treats as "AI insights disabled".
+      - name: Generate lib/config/api_keys.dart
+        script: |
+          set -eu
+          mkdir -p lib/config
+          KEY="${GEMINI_API_KEY:-YOUR_GEMINI_API_KEY_HERE}"
+          cat > lib/config/api_keys.dart <<EOF
+          // Auto-generated in CI — do NOT commit.
+          class ApiKeys {
+            static const geminiApiKey = '$KEY';
+          }
+          EOF
+          if [ -n "${GEMINI_API_KEY:-}" ]; then
+            echo "api_keys.dart: using secret"
+          else
+            echo "api_keys.dart: using placeholder (AI insights disabled)"
+          fi
+
+      - name: Build iOS app (no code signing)
+        script: flutter build ios --release --no-codesign
+
+      - name: Package Runner.app into an unsigned .ipa
+        script: |
+          set -eu
+          cd build/ios/iphoneos
+          rm -rf Payload BetterME-unsigned.ipa
+          mkdir Payload
+          cp -R Runner.app Payload/
+          # An .ipa is just a zip of a Payload/ folder containing the .app
+          zip -qry BetterME-unsigned.ipa Payload
+          ls -lh BetterME-unsigned.ipa
+
+    # Artifact paths are relative to the clone root, NOT to working_directory.
+    artifacts:
+      - betterme/build/ios/iphoneos/*.ipa
+
+    publishing:
+      email:
+        recipients:
+          - CHANGE_ME@example.com   # <- your email, or delete this publishing block
+        notify:
+          success: true
+          failure: true

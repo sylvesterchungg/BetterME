@@ -1,6 +1,4 @@
-import 'dart:io';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_storage/firebase_storage.dart' hide Task;
 import '../models/models.dart';
 
 class DatabaseService {
@@ -24,26 +22,6 @@ class DatabaseService {
     return null;
   }
 
-  // Upload profile photo
-  Future<String> uploadProfilePhoto(File imageFile, String userId) async {
-    final storageRef = FirebaseStorage.instance.ref().child('avatars').child('$userId.jpg');
-    final uploadTask = storageRef.putFile(imageFile);
-    final snapshot = await uploadTask;
-    return await snapshot.ref.getDownloadURL();
-  }
-
-  // Upload a journal entry photo. One photo per user per day (deterministic path
-  // so re-uploading replaces the previous image).
-  Future<String> uploadJournalPhoto(File imageFile, String userId, String dateKey) async {
-    final storageRef = FirebaseStorage.instance
-        .ref()
-        .child('journal_photos')
-        .child(userId)
-        .child('$dateKey.jpg');
-    final snapshot = await storageRef.putFile(imageFile);
-    return await snapshot.ref.getDownloadURL();
-  }
-
   // Stream user profile for real-time updates
   Stream<User?> streamUserProfile(String userId) {
     return _db.collection('users').doc(userId).snapshots().map((doc) {
@@ -52,6 +30,26 @@ class DatabaseService {
       }
       return null;
     });
+  }
+
+  // ── Private profile (PII) ────────────────────────────────────────────────
+  // Owner-only doc (birth date, phone) kept out of the world-readable `users`
+  // doc. Rules restrict read/write to request.auth.uid == userId.
+
+  Stream<PrivateProfile> streamPrivateProfile(String userId) {
+    return _db.collection('privateProfile').doc(userId).snapshots().map((doc) {
+      if (doc.exists && doc.data() != null) {
+        return PrivateProfile.fromMap(doc.data()!);
+      }
+      return const PrivateProfile();
+    });
+  }
+
+  Future<void> savePrivateProfile(String userId, PrivateProfile profile) async {
+    await _db
+        .collection('privateProfile')
+        .doc(userId)
+        .set(profile.toMap(), SetOptions(merge: true));
   }
 
   Future<void> updateStreak(String userId, int newStreak) async {
@@ -226,7 +224,7 @@ class DatabaseService {
   // ==========================================
 
   // ==========================================
-  // FRIEND REQUEST OPERATIONS (FR_502 / FR_503)
+  // FRIEND REQUEST OPERATIONS (FR_601 / FR_602)
   // ==========================================
 
   // Send a friend request by username; throws descriptive exceptions on failure
@@ -326,7 +324,7 @@ class DatabaseService {
   }
 
   // ==========================================
-  // NOTIFICATION OPERATIONS (FR_902, FR_903)
+  // NOTIFICATION OPERATIONS (FR_904)
   // ==========================================
 
   Future<void> addNotification(AppNotification notif) async {
@@ -408,5 +406,37 @@ class DatabaseService {
     final data = doc.data();
     if (data == null) return null;
     return AIInsight.fromMap(data);
+  }
+
+  // Coping suggestions share the owner-only `insights` collection, in their own
+  // per-user doc: `${userId}_coping`.
+  Future<void> saveCoping(String userId, AICopingTips coping) async {
+    await _db.collection('insights').doc('${userId}_coping').set(
+      {'userId': userId, ...coping.toMap()},
+      SetOptions(merge: true),
+    );
+  }
+
+  Future<AICopingTips?> getCachedCoping(String userId) async {
+    final doc = await _db.collection('insights').doc('${userId}_coping').get();
+    final data = doc.data();
+    if (data == null) return null;
+    return AICopingTips.fromMap(data);
+  }
+
+  // The morning nudge shares the owner-only `insights` collection too, in its
+  // own per-user doc: `${userId}_nudge`. No new collection / rules deploy.
+  Future<void> saveNudge(String userId, MorningNudge nudge) async {
+    await _db.collection('insights').doc('${userId}_nudge').set(
+      {'userId': userId, ...nudge.toMap()},
+      SetOptions(merge: true),
+    );
+  }
+
+  Future<MorningNudge?> getCachedNudge(String userId) async {
+    final doc = await _db.collection('insights').doc('${userId}_nudge').get();
+    final data = doc.data();
+    if (data == null) return null;
+    return MorningNudge.fromMap(data);
   }
 }

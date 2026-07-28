@@ -1,0 +1,156 @@
+name: Build iOS IPA (unsigned)
+
+# Builds an UNSIGNED .ipa on a cloud macOS runner.
+# You sign + install it on your iPhone with AltStore / SideStore using your
+# free Apple ID -- no Mac and no paid Apple Developer account required.
+#
+# How to run:
+#   1. Go to the repo's "Actions" tab -> "Build iOS IPA (unsigned)" -> "Run workflow".
+#   2. When it finishes, open the run and download the "betterme-unsigned-ipa" artifact.
+#   3. Unzip it, then drag BetterME-unsigned.ipa into AltStore/SideStore.
+#
+# NOTE: manual-trigger only, deliberately. macOS runners bill at 10x, so the free
+# 2,000 min/month allowance is really ~200 macOS minutes -- about 10 builds. Building
+# on every push burned the whole month's quota. Build an IPA when you actually want
+# to sideload one; run `flutter analyze` / tests locally for free.
+
+on:
+  workflow_dispatch:   # manual "Run workflow" button in the Actions tab
+
+# Cancel an in-progress run if you start another
+concurrency:
+  group: ios-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-ipa:
+    name: Build unsigned IPA
+    runs-on: macos-15        # Sequoia runner — ships Xcode 16 (Swift 6), required by current Firebase SDK
+
+    defaults:
+      run:
+        working-directory: betterme   # the Flutter app lives in the betterme/ subfolder
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Current Firebase iOS SDK (pulled by cloud_firestore/firebase_core) is written
+      # in Swift 6 (uses `sending`, AccessLevelOnImport, ownership specifiers), so it
+      # needs Xcode 16+. Xcode 15's Swift 5.10 compiler fails with "Cannot find type
+      # 'sending' in scope". Pin the newest stable Xcode on the runner.
+      - name: Select latest stable Xcode (Swift 6)
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Show Xcode / Swift versions
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true       # cache the Flutter SDK between runs for speed
+
+      - name: Show Flutter/Dart versions
+        run: flutter --version
+
+      # Firebase's Swift Package Manager path breaks on CI runners with an rsync
+      # error copying prebuilt frameworks into build/ios/SourcePackages/.
+      # Force the proven CocoaPods path instead (this is a global flutter setting,
+      # so it must run before pub get / build ios).
+
+      - name: Use CocoaPods instead of Swift Package Manager
+        run: |
+          flutter config --no-enable-swift-package-manager
+          echo "===== flutter config (verify SPM flag is actually off) ====="
+          flutter config
+
+      # Pure download cache for the CocoaPods spec repos. Safe to reuse (it only
+      # holds podspecs fetched from the CDN, not built artifacts) and saves a
+      # couple of minutes of network time on every run.
+      - name: Cache CocoaPods specs
+        uses: actions/cache@v4
+        with:
+          path: ~/.cocoapods
+          key: cocoapods-${{ runner.os }}-${{ hashFiles('betterme/pubspec.lock') }}
+          restore-keys: cocoapods-${{ runner.os }}-
+
+      # `flutter pub upgrade` was here too -- dropped. It re-resolves to the newest
+      # allowed versions on every run, which costs time and can pull in a breaking
+      # transitive update that fails the build (wasting 10x-billed minutes).
+      # pubspec.lock is the source of truth; upgrade deliberately, locally.
+      - name: Install Dart/Flutter dependencies
+        run: flutter pub get
+
+      # lib/config/api_keys.dart is gitignored (it holds the Gemini key), so it's
+      # absent on CI and the Dart compile fails with "Undefined name 'ApiKeys'".
+      # Recreate it here: use the GEMINI_API_KEY repo secret if it exists, otherwise
+      # fall back to the placeholder so the build still succeeds (the app disables AI
+      # insights when the key equals 'YOUR_GEMINI_API_KEY_HERE').
+      - name: Generate lib/config/api_keys.dart
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          mkdir -p lib/config
+          KEY="${GEMINI_API_KEY:-YOUR_GEMINI_API_KEY_HERE}"
+          cat > lib/config/api_keys.dart <<EOF
+          // Auto-generated in CI — do NOT commit. Real key comes from the
+          // GEMINI_API_KEY repo secret; placeholder means AI insights are disabled.
+          class ApiKeys {
+            static const geminiApiKey = '$KEY';
+          }
+          EOF
+          if [ -n "$GEMINI_API_KEY" ]; then echo "api_keys.dart: using secret"; else echo "api_keys.dart: using placeholder (AI insights disabled)"; fi
+
+      # `flutter analyze` used to run here. Removed: it never failed the build, so it
+      # only produced log noise -- at 10x macOS billing. Run it locally instead.
+
+      - name: Build iOS app (no code signing)
+        # Produces build/ios/iphoneos/Runner.app -- compiled but unsigned.
+        # No --verbose: normal output still prints real compiler errors, but stays
+        # small enough that the GitHub log viewer doesn't truncate the step.
+        run: |
+          set -o pipefail
+          flutter build ios --release --no-codesign 2>&1 | tee "$RUNNER_TEMP/ios-build.log"
+
+      - name: Diagnostics (always) — show project + build state
+        if: always()
+        run: |
+          echo "===== ios/ contents (Podfile generated?) ====="
+          ls -la ios/ || true
+          echo "===== build/ios/ contents ====="
+          ls -la build/ios/ || true
+          echo "===== SourcePackages dir (SPM in use?) ====="
+          ls -la build/ios/SourcePackages/ 2>/dev/null || echo "(no SourcePackages dir)"
+
+      - name: Upload full build log (always)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-build-log
+          path: ${{ runner.temp }}/ios-build.log
+          if-no-files-found: warn
+          retention-days: 3
+
+      - name: Package Runner.app into an unsigned .ipa
+        run: |
+          set -euo pipefail
+          cd build/ios/iphoneos
+          rm -rf Payload BetterME-unsigned.ipa
+          mkdir Payload
+          cp -R Runner.app Payload/
+          # An .ipa is just a zip of a Payload/ folder containing the .app
+          zip -qry BetterME-unsigned.ipa Payload
+          ls -lh BetterME-unsigned.ipa
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: betterme-unsigned-ipa
+          path: betterme/build/ios/iphoneos/BetterME-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 3   # you download it minutes after the build; 30 days just eats the 0.5 GB quota

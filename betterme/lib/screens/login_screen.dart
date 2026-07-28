@@ -1,5 +1,7 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:image_picker/image_picker.dart';
 import '../providers/app_provider.dart';
 import '../theme.dart';
 
@@ -11,13 +13,21 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStateMixin {
+  final _formKey = GlobalKey<FormState>();
+  final _picker = ImagePicker();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
+  final _confirmPasswordController = TextEditingController();
   final _usernameController = TextEditingController();
+  final _nameController = TextEditingController();
+  final _phoneController = TextEditingController();
+  DateTime? _birthDate;
+  File? _avatarFile;
 
   bool _isLogin = true;
   bool _isLoading = false;
   bool _obscurePassword = true;
+  bool _obscureConfirm = true;
 
   late AnimationController _blobController;
 
@@ -34,25 +44,22 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
   void dispose() {
     _emailController.dispose();
     _passwordController.dispose();
+    _confirmPasswordController.dispose();
     _usernameController.dispose();
+    _nameController.dispose();
+    _phoneController.dispose();
     _blobController.dispose();
     super.dispose();
   }
 
   void _submit() async {
+    // Runs the validators of every currently-mounted field (login mode only
+    // mounts email + password; sign-up also mounts username/confirm/phone).
+    if (!(_formKey.currentState?.validate() ?? false)) return;
+
     final email = _emailController.text.trim();
     final password = _passwordController.text.trim();
     final username = _usernameController.text.trim();
-
-    if (email.isEmpty || password.isEmpty) {
-      _showError('Please enter email and password.');
-      return;
-    }
-
-    if (!_isLogin && username.isEmpty) {
-      _showError('Please enter a username.');
-      return;
-    }
 
     setState(() => _isLoading = true);
 
@@ -60,7 +67,15 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
       if (_isLogin) {
         await context.read<AppProvider>().loginWithEmail(email, password);
       } else {
-        await context.read<AppProvider>().registerWithEmail(email, password, username);
+        await context.read<AppProvider>().registerWithEmail(
+              email,
+              password,
+              username,
+              name: _nameController.text.trim(),
+              birthDate: _birthDate,
+              phoneNumber: _phoneController.text.trim(),
+              photo: _avatarFile,
+            );
       }
       // No manual navigation — AuthGate swaps to MainScreen when auth state changes.
     } catch (e) {
@@ -68,6 +83,113 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
+  }
+
+  // ── Validators ─────────────────────────────────────────────────────────────
+
+  String? _validateName(String? v) {
+    final value = (v ?? '').trim();
+    if (value.isEmpty) return 'Please enter your name';
+    return null;
+  }
+
+  String? _validateUsername(String? v) {
+    final value = (v ?? '').trim();
+    if (value.isEmpty) return 'Please choose a username';
+    if (value.length < 3) return 'At least 3 characters';
+    return null;
+  }
+
+  String? _validateEmail(String? v) {
+    final value = (v ?? '').trim();
+    if (value.isEmpty) return 'Please enter your email';
+    final emailRegex = RegExp(r'^[\w.+-]+@[\w-]+\.[\w.-]+$');
+    if (!emailRegex.hasMatch(value)) return 'Enter a valid email address';
+    return null;
+  }
+
+  String? _validatePassword(String? v) {
+    final value = v ?? '';
+    if (value.isEmpty) return 'Please enter a password';
+    if (value.length < 6) return 'At least 6 characters';
+    return null;
+  }
+
+  String? _validateConfirm(String? v) {
+    if ((v ?? '') != _passwordController.text) return 'Passwords do not match';
+    return null;
+  }
+
+  // Phone is optional; only validate the format when something was typed.
+  String? _validatePhone(String? v) {
+    final value = (v ?? '').trim();
+    if (value.isEmpty) return null;
+    final phoneRegex = RegExp(r'^\+?[\d\s-]{7,15}$');
+    if (!phoneRegex.hasMatch(value)) return 'Enter a valid phone number';
+    return null;
+  }
+
+  Future<void> _pickBirthDate() async {
+    final now = DateTime.now();
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _birthDate ?? DateTime(now.year - 18, now.month, now.day),
+      firstDate: DateTime(1900),
+      lastDate: now,
+      helpText: 'Select your birth date',
+    );
+    if (picked != null) setState(() => _birthDate = picked);
+  }
+
+  Future<void> _pickAvatar() async {
+    final img = await _picker.pickImage(
+      source: ImageSource.gallery,
+      maxWidth: 800,
+      imageQuality: 85,
+    );
+    if (img != null) setState(() => _avatarFile = File(img.path));
+  }
+
+  // Circular avatar picker shown on the sign-up form. Tapping it opens the
+  // gallery; until a photo is chosen it shows a neutral silhouette default
+  // (like Instagram/Facebook) rather than a randomly generated stock image.
+  Widget _buildAvatarPicker() {
+    return GestureDetector(
+      onTap: _pickAvatar,
+      child: Stack(
+        children: [
+          Container(
+            width: 88,
+            height: 88,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: AppTheme.surfaceContainerHigh,
+              border: Border.all(color: AppTheme.outlineVariant, width: 2),
+              image: _avatarFile != null
+                  ? DecorationImage(
+                      image: FileImage(_avatarFile!), fit: BoxFit.cover)
+                  : null,
+            ),
+            child: _avatarFile == null
+                ? const Icon(Icons.person, size: 44, color: AppTheme.outline)
+                : null,
+          ),
+          Positioned(
+            right: 0,
+            bottom: 0,
+            child: Container(
+              padding: const EdgeInsets.all(6),
+              decoration: BoxDecoration(
+                color: AppTheme.primary,
+                shape: BoxShape.circle,
+                border: Border.all(color: Colors.white, width: 2),
+              ),
+              child: const Icon(Icons.camera_alt, size: 14, color: Colors.white),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   void _loginWithGoogle() async {
@@ -94,10 +216,17 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
       await context.read<AppProvider>().sendPasswordResetEmail(email);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Password reset email sent. Check your inbox.')),
+          const SnackBar(
+            // Firebase's default sender (noreply@<project>.firebaseapp.com) is
+            // very often filtered as spam, so say so up front -- otherwise a
+            // working reset looks broken to the user.
+            content: Text('Password reset email sent. Check your inbox — and your spam/junk folder.'),
+            duration: Duration(seconds: 6),
+          ),
         );
       }
     } catch (e) {
+      debugPrint('Password reset error: $e');
       _showError('Could not send reset email. Check the address and try again.');
     } finally {
       if (mounted) setState(() => _isLoading = false);
@@ -105,6 +234,12 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
   }
 
   void _showError(String message) {
+    // Guards every call site at once: AuthGate can swap this screen out from
+    // under an in-flight auth call (e.g. createUserWithEmailAndPassword
+    // succeeds and fires authStateChanges before updateDisplayName finishes
+    // and throws), so `context` may already be unmounted by the time a catch
+    // block here runs.
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
       content: Text(message),
       backgroundColor: AppTheme.error,
@@ -241,17 +376,41 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
           ),
         ],
       ),
-      child: Column(
+      child: Form(
+        key: _formKey,
+        autovalidateMode: AutovalidateMode.onUserInteraction,
+        child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // Username field (only for registration)
+          // Profile photo picker (only for registration)
           if (!_isLogin) ...[
+            _buildAvatarPicker(),
+            const SizedBox(height: 6),
+            const Text(
+              'Add a photo (optional)',
+              style: TextStyle(fontSize: 12, color: AppTheme.onSurfaceVariant),
+            ),
+            const SizedBox(height: 20),
+          ],
+
+          // Full name + username fields (only for registration)
+          if (!_isLogin) ...[
+            _buildFieldLabel('Full Name'),
+            const SizedBox(height: 8),
+            _buildTextField(
+              controller: _nameController,
+              icon: Icons.badge_outlined,
+              hint: 'Your real name',
+              validator: _validateName,
+            ),
+            const SizedBox(height: 16),
             _buildFieldLabel('Username'),
             const SizedBox(height: 8),
             _buildTextField(
               controller: _usernameController,
-              icon: Icons.person,
+              icon: Icons.alternate_email,
               hint: 'Choose a username',
+              validator: _validateUsername,
             ),
             const SizedBox(height: 16),
           ],
@@ -264,6 +423,7 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
             icon: Icons.mail,
             hint: 'name@example.com',
             keyboardType: TextInputType.emailAddress,
+            validator: _validateEmail,
           ),
           const SizedBox(height: 16),
 
@@ -288,7 +448,43 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
             ],
           ),
           const SizedBox(height: 8),
-          _buildPasswordField(),
+          _buildPasswordField(
+            controller: _passwordController,
+            obscure: _obscurePassword,
+            onToggle: () => setState(() => _obscurePassword = !_obscurePassword),
+            validator: _validatePassword,
+            textInputAction:
+                _isLogin ? TextInputAction.done : TextInputAction.next,
+            onFieldSubmitted: _isLogin ? (_) => _submit() : null,
+          ),
+
+          // Confirm password + optional details (registration only)
+          if (!_isLogin) ...[
+            const SizedBox(height: 16),
+            _buildFieldLabel('Confirm Password'),
+            const SizedBox(height: 8),
+            _buildPasswordField(
+              controller: _confirmPasswordController,
+              obscure: _obscureConfirm,
+              onToggle: () =>
+                  setState(() => _obscureConfirm = !_obscureConfirm),
+              validator: _validateConfirm,
+            ),
+            const SizedBox(height: 16),
+            _buildFieldLabel('Birth Date (optional)'),
+            const SizedBox(height: 8),
+            _buildDateField(),
+            const SizedBox(height: 16),
+            _buildFieldLabel('Phone (optional)'),
+            const SizedBox(height: 8),
+            _buildTextField(
+              controller: _phoneController,
+              icon: Icons.phone,
+              hint: '+1 555 123 4567',
+              keyboardType: TextInputType.phone,
+              validator: _validatePhone,
+            ),
+          ],
           const SizedBox(height: 24),
 
           // Sign In / Sign Up Button
@@ -359,6 +555,7 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
             ),
           ),
         ],
+        ),
       ),
     );
   }
@@ -386,10 +583,12 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
     required IconData icon,
     required String hint,
     TextInputType keyboardType = TextInputType.text,
+    String? Function(String?)? validator,
   }) {
-    return TextField(
+    return TextFormField(
       controller: controller,
       keyboardType: keyboardType,
+      validator: validator,
       style: const TextStyle(fontSize: 14, color: AppTheme.onSurface),
       decoration: InputDecoration(
         prefixIcon: Icon(icon, color: AppTheme.outline, size: 20),
@@ -410,11 +609,20 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
     );
   }
 
-  Widget _buildPasswordField() {
-    return TextField(
-      controller: _passwordController,
-      obscureText: _obscurePassword,
-      onSubmitted: (_) => _submit(),
+  Widget _buildPasswordField({
+    required TextEditingController controller,
+    required bool obscure,
+    required VoidCallback onToggle,
+    String? Function(String?)? validator,
+    TextInputAction textInputAction = TextInputAction.done,
+    ValueChanged<String>? onFieldSubmitted,
+  }) {
+    return TextFormField(
+      controller: controller,
+      obscureText: obscure,
+      validator: validator,
+      textInputAction: textInputAction,
+      onFieldSubmitted: onFieldSubmitted,
       style: const TextStyle(fontSize: 14, color: AppTheme.onSurface),
       decoration: InputDecoration(
         prefixIcon: const Icon(Icons.lock, color: AppTheme.outline, size: 20),
@@ -432,11 +640,44 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
         ),
         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         suffixIcon: GestureDetector(
-          onTap: () => setState(() => _obscurePassword = !_obscurePassword),
+          onTap: onToggle,
           child: Icon(
-            _obscurePassword ? Icons.visibility : Icons.visibility_off,
+            obscure ? Icons.visibility : Icons.visibility_off,
             color: AppTheme.outline,
             size: 20,
+          ),
+        ),
+      ),
+    );
+  }
+
+  // Tappable, read-only field that opens the date picker. Birth date is
+  // optional, so there is no validator — an un-picked value stays null.
+  Widget _buildDateField() {
+    final hasDate = _birthDate != null;
+    final label = hasDate
+        ? '${_birthDate!.year}-${_birthDate!.month.toString().padLeft(2, '0')}-${_birthDate!.day.toString().padLeft(2, '0')}'
+        : 'Select date';
+    return InkWell(
+      onTap: _pickBirthDate,
+      borderRadius: BorderRadius.circular(8),
+      child: InputDecorator(
+        decoration: InputDecoration(
+          prefixIcon: const Icon(Icons.cake, color: AppTheme.outline, size: 20),
+          filled: true,
+          fillColor: AppTheme.surfaceContainerLow,
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(8),
+            borderSide: BorderSide.none,
+          ),
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 14,
+            color: hasDate ? AppTheme.onSurface : AppTheme.outlineVariant,
           ),
         ),
       ),

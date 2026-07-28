@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:intl/intl.dart';
 import '../providers/app_provider.dart';
 import '../theme.dart';
 import '../models/models.dart';
+import '../utils/image_helpers.dart';
 import '../widgets/app_page_header.dart';
 
 class FriendsTab extends StatefulWidget {
@@ -14,10 +16,16 @@ class FriendsTab extends StatefulWidget {
 
 class _FriendsTabState extends State<FriendsTab> {
   final TextEditingController _searchController = TextEditingController();
+  // Guards against a fast double-tap firing two sendFriendRequest() calls —
+  // the duplicate-pending-request check in DatabaseService is a separate
+  // read-then-write, not a transaction, so two near-simultaneous taps could
+  // otherwise both pass the check and create two pending requests.
+  bool _sendingRequest = false;
 
   void _handleSendRequest(AppProvider provider) async {
     final username = _searchController.text.trim();
-    if (username.isEmpty) return;
+    if (username.isEmpty || _sendingRequest) return;
+    setState(() => _sendingRequest = true);
 
     try {
       await provider.sendFriendRequest(username);
@@ -33,8 +41,15 @@ class _FriendsTabState extends State<FriendsTab> {
           SnackBar(content: Text(e.toString().replaceFirst('Exception: ', ''))),
         );
       }
+    } finally {
+      if (mounted) setState(() => _sendingRequest = false);
     }
   }
+
+  // Per-request in-flight guard — a fast double-tap on Accept would otherwise
+  // fire respondToRequest() twice before the request disappears from the
+  // incoming-requests stream, sending the "accepted" notification twice.
+  final Set<String> _respondingIds = {};
 
   Future<void> _handleRespond(
     AppProvider provider,
@@ -42,6 +57,8 @@ class _FriendsTabState extends State<FriendsTab> {
     String fromId,
     bool accept,
   ) async {
+    if (_respondingIds.contains(requestId)) return;
+    setState(() => _respondingIds.add(requestId));
     try {
       await provider.respondToRequest(requestId, fromId, accept);
       if (mounted) {
@@ -59,6 +76,8 @@ class _FriendsTabState extends State<FriendsTab> {
           context,
         ).showSnackBar(SnackBar(content: Text('Error: $e')));
       }
+    } finally {
+      if (mounted) setState(() => _respondingIds.remove(requestId));
     }
   }
 
@@ -79,20 +98,8 @@ class _FriendsTabState extends State<FriendsTab> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 AppPageHeader(
-                  title: 'Community',
+                  title: 'Friends',
                   user: provider.currentUser,
-                  leadingWidget: Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: AppTheme.primaryContainer,
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: const Icon(
-                      Icons.bubble_chart,
-                      color: Colors.white,
-                      size: 20,
-                    ),
-                  ),
                 ),
                 const SizedBox(height: 24),
                 _buildSearchAndAdd(provider),
@@ -102,6 +109,8 @@ class _FriendsTabState extends State<FriendsTab> {
                 ],
                 const SizedBox(height: 24),
                 _buildFriendCircles(provider),
+                const SizedBox(height: 24),
+                _buildFriendsFeed(provider),
                 const SizedBox(height: 24),
                 _buildLeaderboardAndActivity(context, provider),
                 const SizedBox(height: 32),
@@ -150,11 +159,13 @@ class _FriendsTabState extends State<FriendsTab> {
         ),
         const SizedBox(width: 12),
         GestureDetector(
-          onTap: () => _handleSendRequest(provider),
+          onTap: _sendingRequest ? null : () => _handleSendRequest(provider),
           child: Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
-              color: AppTheme.primary,
+              color: _sendingRequest
+                  ? AppTheme.primary.withValues(alpha: 0.5)
+                  : AppTheme.primary,
               borderRadius: BorderRadius.circular(12),
             ),
             child: const Icon(Icons.person_add, color: Colors.white),
@@ -220,9 +231,7 @@ class _FriendsTabState extends State<FriendsTab> {
                         CircleAvatar(
                           radius: 24,
                           backgroundColor: AppTheme.borderDefault,
-                          backgroundImage: req.fromAvatarUrl.isNotEmpty
-                              ? NetworkImage(req.fromAvatarUrl)
-                              : null,
+                          backgroundImage: imageProviderFor(req.fromAvatarUrl),
                           child: req.fromAvatarUrl.isEmpty
                               ? const Icon(
                                   Icons.person,
@@ -255,19 +264,23 @@ class _FriendsTabState extends State<FriendsTab> {
                         Row(
                           children: [
                             GestureDetector(
-                              onTap: () => _handleRespond(
-                                provider,
-                                req.id,
-                                req.fromId,
-                                true,
-                              ),
+                              onTap: _respondingIds.contains(req.id)
+                                  ? null
+                                  : () => _handleRespond(
+                                        provider,
+                                        req.id,
+                                        req.fromId,
+                                        true,
+                                      ),
                               child: Container(
                                 padding: const EdgeInsets.symmetric(
                                   horizontal: 14,
                                   vertical: 7,
                                 ),
                                 decoration: BoxDecoration(
-                                  color: AppTheme.primary,
+                                  color: _respondingIds.contains(req.id)
+                                      ? AppTheme.primary.withValues(alpha: 0.5)
+                                      : AppTheme.primary,
                                   borderRadius: BorderRadius.circular(8),
                                 ),
                                 child: const Text(
@@ -282,12 +295,14 @@ class _FriendsTabState extends State<FriendsTab> {
                             ),
                             const SizedBox(width: 8),
                             GestureDetector(
-                              onTap: () => _handleRespond(
-                                provider,
-                                req.id,
-                                req.fromId,
-                                false,
-                              ),
+                              onTap: _respondingIds.contains(req.id)
+                                  ? null
+                                  : () => _handleRespond(
+                                        provider,
+                                        req.id,
+                                        req.fromId,
+                                        false,
+                                      ),
                               child: Container(
                                 padding: const EdgeInsets.symmetric(
                                   horizontal: 14,
@@ -343,22 +358,9 @@ class _FriendsTabState extends State<FriendsTab> {
 
     return Column(
       children: [
-        const Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Text(
-              'Friend Circles',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
-            ),
-            Text(
-              'View All',
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w500,
-                color: AppTheme.primary,
-              ),
-            ),
-          ],
+        const Text(
+          'Friend Circles',
+          style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
         ),
         const SizedBox(height: 16),
         SingleChildScrollView(
@@ -476,9 +478,9 @@ class _FriendsTabState extends State<FriendsTab> {
                     shape: BoxShape.circle,
                     color: AppTheme.borderDefault,
                     border: Border.all(color: AppTheme.primary, width: 2),
-                    image: friend.avatarUrl.isNotEmpty
+                    image: imageProviderFor(friend.avatarUrl) != null
                         ? DecorationImage(
-                            image: NetworkImage(friend.avatarUrl),
+                            image: imageProviderFor(friend.avatarUrl)!,
                             fit: BoxFit.cover,
                           )
                         : null,
@@ -498,7 +500,7 @@ class _FriendsTabState extends State<FriendsTab> {
                         shape: BoxShape.circle,
                         border: Border.all(color: Colors.white, width: 2),
                       ),
-                      child: Icon(mood.icon, color: mood.fg, size: 16),
+                      child: Icon(mood.icon, color: mood.fg, size: 26),
                     ),
                   ),
               ],
@@ -512,6 +514,197 @@ class _FriendsTabState extends State<FriendsTab> {
         ],
       ),
     );
+  }
+
+  // ── Friends' Journal feed ──────────────────────────────────────────────
+  // A simple social feed of the journal entries friends have chosen to share
+  // (isSharedWithFriends). An entry only shows once the friend shares it AND
+  // you're mutual friends — and your OWN shared entries appear in your friends'
+  // feeds, not your own (see streamFriendsSharedLogs).
+  Widget _buildFriendsFeed(AppProvider provider) {
+    final logs = provider.friendsSharedLogs;
+    final friendMap = {for (final f in provider.friends) f.id: f};
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Row(
+          children: [
+            Icon(Icons.dynamic_feed, size: 18, color: AppTheme.primary),
+            SizedBox(width: 6),
+            Text(
+              "Friends' Journal",
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        if (logs.isEmpty)
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: AppTheme.surfaceContainerLow,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: AppTheme.borderDefault),
+            ),
+            child: const Column(
+              children: [
+                Icon(Icons.auto_stories_outlined, color: AppTheme.outline, size: 28),
+                SizedBox(height: 8),
+                Text('No shared entries yet',
+                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+                SizedBox(height: 4),
+                Text(
+                  "When a friend shares a journal entry, it'll show up here.",
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 12, color: AppTheme.onSurfaceVariant),
+                ),
+              ],
+            ),
+          )
+        else
+          ...logs.map((log) => _buildFeedPost(log, friendMap[log.userId])),
+      ],
+    );
+  }
+
+  Widget _buildFeedPost(LogEntry log, User? friend) {
+    final avatar = imageProviderFor(friend?.avatarUrl ?? '');
+    return Container(
+      margin: const EdgeInsets.only(bottom: 14),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppTheme.borderDefault),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.03),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              CircleAvatar(
+                radius: 18,
+                backgroundColor: AppTheme.surfaceContainerHighest,
+                backgroundImage: avatar,
+                child: avatar == null
+                    ? const Icon(Icons.person, size: 18, color: AppTheme.outlineVariant)
+                    : null,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(friend?.username ?? 'Friend',
+                        style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+                    Text(DateFormat('EEE, MMM d').format(log.date),
+                        style: const TextStyle(fontSize: 11, color: AppTheme.outline)),
+                  ],
+                ),
+              ),
+              if (log.moodScore > 0)
+                Icon(_feedMoodIcon(log.moodScore),
+                    color: _feedMoodColor(log.moodScore), size: 22),
+            ],
+          ),
+          if (log.moodScore > 0 || log.sleepHours > 0) ...[
+            const SizedBox(height: 20),
+            Wrap(
+              spacing: 8,
+              runSpacing: 6,
+              children: [
+                if (log.moodScore > 0)
+                  _feedChip(Icons.mood, 'Mood ${log.moodScore.toStringAsFixed(1)}/10'),
+                if (log.sleepHours > 0)
+                  _feedChip(Icons.bedtime_outlined,
+                      '${log.sleepHours.toStringAsFixed(1)}h sleep'),
+              ],
+            ),
+          ],
+          if (log.notes.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Text(log.notes,
+                style: const TextStyle(fontSize: 14, color: AppTheme.onSurface, height: 1.5)),
+          ],
+          if (log.emotions.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 6,
+              runSpacing: 4,
+              children: log.emotions
+                  .map((e) => Chip(
+                        label: Text(e, style: const TextStyle(fontSize: 11)),
+                        padding: EdgeInsets.zero,
+                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        backgroundColor: AppTheme.surfaceContainerHighest,
+                        side: BorderSide.none,
+                      ))
+                  .toList(),
+            ),
+          ],
+          if (log.photoUrl.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: storedImage(
+                log.photoUrl,
+                width: double.infinity,
+                maxHeight: 300,
+                fit: BoxFit.contain,
+                fallback: Container(
+                  height: 180,
+                  color: AppTheme.surfaceContainer,
+                  child: const Center(
+                    child: Icon(Icons.broken_image_outlined, color: AppTheme.outlineVariant),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _feedChip(IconData icon, String label) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: AppTheme.surfaceContainer,
+        borderRadius: BorderRadius.circular(50),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 14, color: AppTheme.onSurfaceVariant),
+          const SizedBox(width: 6),
+          Text(label, style: const TextStyle(fontSize: 12, color: AppTheme.onSurfaceVariant)),
+        ],
+      ),
+    );
+  }
+
+  IconData _feedMoodIcon(double s) {
+    if (s <= 2) return Icons.sentiment_very_dissatisfied;
+    if (s <= 4) return Icons.sentiment_dissatisfied;
+    if (s <= 6) return Icons.sentiment_neutral;
+    if (s <= 8.5) return Icons.sentiment_satisfied;
+    return Icons.sentiment_very_satisfied;
+  }
+
+  Color _feedMoodColor(double s) {
+    if (s <= 4) return AppTheme.error;
+    if (s <= 6) return AppTheme.tertiary;
+    return AppTheme.secondary;
   }
 
   Widget _buildLeaderboardAndActivity(
@@ -528,7 +721,7 @@ class _FriendsTabState extends State<FriendsTab> {
   }
 
   Widget _buildLeaderboardCard(BuildContext context, AppProvider provider) {
-    // Friends-only leaderboard ranked by streak (FR_505 / LeaderboardEntry).
+    // Friends-only leaderboard ranked by streak (FR_604 / LeaderboardEntry).
     // `provider.leaderboard` is already streak-sorted with a username tiebreak.
     final sorted = provider.leaderboard; // current user + friends
     final currentUser = provider.currentUser;
@@ -656,7 +849,10 @@ class _FriendsTabState extends State<FriendsTab> {
           CircleAvatar(
             radius: 20,
             backgroundColor: AppTheme.borderDefault,
-            backgroundImage: NetworkImage(avatarUrl),
+            backgroundImage: imageProviderFor(avatarUrl),
+            child: imageProviderFor(avatarUrl) == null
+                ? const Icon(Icons.person, size: 20, color: AppTheme.outline)
+                : null,
           ),
           const SizedBox(width: 12),
           Expanded(

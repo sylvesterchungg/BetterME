@@ -6,6 +6,7 @@ import 'package:intl/intl.dart';
 import '../providers/app_provider.dart';
 import '../models/models.dart';
 import '../theme.dart';
+import '../utils/image_helpers.dart';
 import '../widgets/app_page_header.dart';
 
 class PersonalDiaryScreen extends StatefulWidget {
@@ -103,7 +104,21 @@ class _PersonalDiaryScreenState extends State<PersonalDiaryScreen> {
           ),
         ),
         floatingActionButton: FloatingActionButton.extended(
-          onPressed: () => _showEditSheet(context, provider),
+          onPressed: () {
+            // Prefill with today's existing entry if one exists — without
+            // this, the sheet always opened blank and saving it overwrote
+            // (erased) any notes/photo already written for today.
+            final now = DateTime.now();
+            final todayLogs = myLogs.where((l) =>
+                l.date.year == now.year &&
+                l.date.month == now.month &&
+                l.date.day == now.day).toList();
+            if (todayLogs.isNotEmpty) {
+              _showEditSheet(context, provider, log: todayLogs.first);
+            } else {
+              _showEditSheet(context, provider, date: now);
+            }
+          },
           backgroundColor: AppTheme.primary,
           foregroundColor: Colors.white,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -533,7 +548,7 @@ class _PersonalDiaryScreenState extends State<PersonalDiaryScreen> {
             ),
           ),
 
-          // Mood + sleep summary
+          // Mood + sleep summary (read-only preview — edit these in the Daily Log tab)
           if (hasMood || hasSleep)
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -629,12 +644,12 @@ class _PersonalDiaryScreenState extends State<PersonalDiaryScreen> {
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(12),
-                child: Image.network(
+                child: storedImage(
                   log.photoUrl,
                   width: double.infinity,
-                  height: 180,
-                  fit: BoxFit.cover,
-                  errorBuilder: (context, error, stackTrace) => Container(
+                  maxHeight: 320,
+                  fit: BoxFit.contain,
+                  fallback: Container(
                     height: 180,
                     color: AppTheme.surfaceContainer,
                     child: const Center(
@@ -695,9 +710,8 @@ class _PersonalDiaryScreenState extends State<PersonalDiaryScreen> {
               // Friend avatar
               CircleAvatar(
                 radius: 16,
-                backgroundImage: friend != null && friend.avatarUrl.isNotEmpty
-                    ? NetworkImage(friend.avatarUrl)
-                    : null,
+                backgroundImage:
+                    friend != null ? imageProviderFor(friend.avatarUrl) : null,
                 backgroundColor: AppTheme.surfaceContainerHighest,
                 child: friend == null || friend.avatarUrl.isEmpty
                     ? const Icon(Icons.person, size: 16, color: AppTheme.outlineVariant)
@@ -756,12 +770,12 @@ class _PersonalDiaryScreenState extends State<PersonalDiaryScreen> {
             const SizedBox(height: 10),
             ClipRRect(
               borderRadius: BorderRadius.circular(12),
-              child: Image.network(
+              child: storedImage(
                 log.photoUrl,
                 width: double.infinity,
-                height: 160,
-                fit: BoxFit.cover,
-                errorBuilder: (context, error, stackTrace) => Container(
+                maxHeight: 300,
+                fit: BoxFit.contain,
+                fallback: Container(
                   height: 160,
                   color: AppTheme.surfaceContainer,
                   child: const Center(
@@ -776,34 +790,37 @@ class _PersonalDiaryScreenState extends State<PersonalDiaryScreen> {
     );
   }
 
-  Widget _summaryChip(IconData icon, String label, Color bg, Color fg) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-      decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(20)),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 13, color: fg),
-          const SizedBox(width: 4),
-          Text(label, style: TextStyle(fontSize: 12, color: fg, fontWeight: FontWeight.w500)),
-        ],
-      ),
-    );
-  }
+}
 
-  IconData _moodIcon(double score) {
-    if (score <= 0) return Icons.sentiment_neutral;
-    if (score >= 7) return Icons.sentiment_very_satisfied; // High
-    if (score >= 4) return Icons.sentiment_satisfied; // Moderate
-    return Icons.sentiment_dissatisfied; // Low
-  }
+// Shared read-only chip/mood helpers, used by both the entry cards and the
+// editor's read-only preview (top-level so both State classes can call them).
+Widget _summaryChip(IconData icon, String label, Color bg, Color fg) {
+  return Container(
+    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+    decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(20)),
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 13, color: fg),
+        const SizedBox(width: 4),
+        Text(label, style: TextStyle(fontSize: 12, color: fg, fontWeight: FontWeight.w500)),
+      ],
+    ),
+  );
+}
 
-  Color _moodColor(double score) {
-    if (score <= 0) return AppTheme.outlineVariant;
-    if (score >= 7) return const Color(0xFF2E7D32); // High
-    if (score >= 4) return const Color(0xFFF57F17); // Moderate
-    return AppTheme.error; // Low
-  }
+IconData _moodIcon(double score) {
+  if (score <= 0) return Icons.sentiment_neutral;
+  if (score >= 7) return Icons.sentiment_very_satisfied; // High
+  if (score >= 4) return Icons.sentiment_satisfied; // Moderate
+  return Icons.sentiment_dissatisfied; // Low
+}
+
+Color _moodColor(double score) {
+  if (score <= 0) return AppTheme.outlineVariant;
+  if (score >= 7) return const Color(0xFF2E7D32); // High
+  if (score >= 4) return const Color(0xFFF57F17); // Moderate
+  return AppTheme.error; // Low
 }
 
 // Full-field journal editor. Kept as its own StatefulWidget (rather than a
@@ -821,19 +838,13 @@ class _EditJournalSheet extends StatefulWidget {
 }
 
 class _EditJournalSheetState extends State<_EditJournalSheet> {
-  static const _emotionOptions = ['Anxiety', 'Fatigue', 'Headache', 'Nausea', 'Pain', 'Joy', 'Stress', 'Calm'];
-  static const _qualityLevels = [0, 2, 4, 6, 8, 10];
-  static const _qualityLabels = ['Not set', 'Restless', 'Poor', 'Good', 'Solid', 'Deep'];
-
+  // The journal entry is intentionally just a photo + a note (+ a share
+  // toggle). Mood, sleep and symptoms are captured in the Daily Log tab and are
+  // deliberately not edited here, so writing a journal entry never overwrites
+  // them.
   late final DateTime _date;
-  late double _moodScore;
-  late double _sleepHours;
-  late int _sleepQuality;
-  late bool _hadNightmare;
   late bool _isShared;
   late final TextEditingController _notesCtrl;
-  late final TextEditingController _triggerCtrl;
-  late final Set<String> _emotions;
   late String _photoUrl;
   bool _saving = false;
   bool _uploadingPhoto = false;
@@ -844,32 +855,36 @@ class _EditJournalSheetState extends State<_EditJournalSheet> {
     super.initState();
     final log = widget.log;
     _date = log?.date ?? widget.initialDate ?? DateTime.now();
-    _moodScore = log?.moodScore ?? 0;
-    _sleepHours = log?.sleepHours ?? 0;
-    _sleepQuality = log?.sleepQuality ?? 0;
-    _hadNightmare = log?.hadNightmare ?? false;
     _isShared = log?.isSharedWithFriends ?? false;
     _notesCtrl = TextEditingController(text: log?.notes ?? '');
-    _triggerCtrl = TextEditingController(text: log?.trigger ?? '');
-    _emotions = {...(log?.emotions ?? const [])};
     _photoUrl = log?.photoUrl ?? '';
   }
 
   Future<void> _pickPhoto() async {
     if (_uploadingPhoto) return;
-    final XFile? image =
-        await _picker.pickImage(source: ImageSource.gallery, imageQuality: 85);
+    final XFile? image = await _picker.pickImage(
+      source: ImageSource.gallery,
+      maxWidth: 1080,
+      imageQuality: 70,
+    );
     if (image == null) return;
 
     setState(() => _uploadingPhoto = true);
     try {
-      final url =
-          await widget.provider.uploadJournalPhoto(File(image.path), _date);
-      if (mounted) setState(() => _photoUrl = url);
+      // No Firebase Storage on the free plan — encode the (resized) image as
+      // base64 and keep it on the log document itself.
+      final encoded = await fileToBase64(File(image.path));
+      if (!mounted) return;
+      if (encoded == null) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('That photo is too large to save. Try a smaller one.')));
+      } else {
+        setState(() => _photoUrl = encoded);
+      }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Failed to upload photo: $e')));
+            .showSnackBar(SnackBar(content: Text('Failed to add photo: $e')));
       }
     } finally {
       if (mounted) setState(() => _uploadingPhoto = false);
@@ -879,26 +894,104 @@ class _EditJournalSheetState extends State<_EditJournalSheet> {
   @override
   void dispose() {
     _notesCtrl.dispose();
-    _triggerCtrl.dispose();
     super.dispose();
+  }
+
+  // The day's log (for showing mood/sleep read-only). Uses the passed-in entry
+  // when editing, otherwise finds today's log so "Write about today" can still
+  // show what was already logged in the Daily Log tab.
+  LogEntry? get _dayLog {
+    if (widget.log != null) return widget.log;
+    for (final l in widget.provider.logs) {
+      if (l.date.year == _date.year &&
+          l.date.month == _date.month &&
+          l.date.day == _date.day) {
+        return l;
+      }
+    }
+    return null;
+  }
+
+  // Read-only preview of the day's logged mood/sleep/quality/emotions — same
+  // chips as the entry cards. These are edited in the Daily Log tab, not here.
+  // Renders nothing when the day has nothing logged yet.
+  Widget _buildLoggedInfo() {
+    final log = _dayLog;
+    final mood = log?.moodScore ?? 0;
+    final sleep = log?.sleepHours ?? 0;
+    final quality = log?.sleepQuality ?? 0;
+    final nightmare = log?.hadNightmare ?? false;
+    final emotions = log?.emotions ?? const <String>[];
+    final hasAny =
+        mood > 0 || sleep > 0 || quality > 0 || nightmare || emotions.isNotEmpty;
+    if (!hasAny) return const SizedBox.shrink();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Wrap(
+          spacing: 8,
+          runSpacing: 6,
+          children: [
+            if (mood > 0)
+              _summaryChip(Icons.mood, '${mood.toStringAsFixed(1)} / 10',
+                  _moodColor(mood).withValues(alpha: 0.12), _moodColor(mood)),
+            if (sleep > 0)
+              _summaryChip(Icons.bedtime_outlined, '${sleep.toStringAsFixed(1)}h',
+                  AppTheme.secondaryFixed.withValues(alpha: 0.5), AppTheme.secondary),
+            if (quality > 0)
+              _summaryChip(Icons.star_outline, 'Quality $quality/10',
+                  AppTheme.secondaryFixed.withValues(alpha: 0.3), AppTheme.secondary),
+            if (nightmare)
+              _summaryChip(Icons.nightlight_outlined, 'Nightmare',
+                  const Color(0xFFFFDAD6), AppTheme.error),
+          ],
+        ),
+        if (emotions.isNotEmpty) ...[
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 6,
+            runSpacing: 4,
+            children: emotions
+                .map((e) => Chip(
+                      label: Text(e, style: const TextStyle(fontSize: 11)),
+                      padding: EdgeInsets.zero,
+                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      backgroundColor: AppTheme.surfaceContainerHighest,
+                      side: BorderSide.none,
+                    ))
+                .toList(),
+          ),
+        ],
+        const SizedBox(height: 20),
+      ],
+    );
   }
 
   Future<void> _save() async {
     if (_saving) return;
     setState(() => _saving = true);
+    // Only the journal fields — mood/sleep/quality live in the Daily Log tab, so
+    // we deliberately don't write them here (the upsert leaves them untouched).
     final fields = <String, dynamic>{
-      'moodScore': _moodScore,
-      'sleepHours': _sleepHours,
-      'sleepQuality': _sleepQuality,
-      'hadNightmare': _hadNightmare,
       'isSharedWithFriends': _isShared,
       'notes': _notesCtrl.text.trim(),
-      'trigger': _triggerCtrl.text.trim(),
-      'emotions': _emotions.toList(),
       'photoUrl': _photoUrl,
     };
-    await widget.provider.saveLogFields(_date, fields);
-    if (mounted) Navigator.of(context).pop();
+    try {
+      await widget.provider.saveLogFields(_date, fields);
+      if (mounted) Navigator.of(context).pop();
+    } catch (e) {
+      if (mounted) {
+        setState(() => _saving = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Could not save — check your connection and try again.'),
+            backgroundColor: AppTheme.error,
+          ),
+        );
+      }
+    }
   }
 
   @override
@@ -935,103 +1028,39 @@ class _EditJournalSheetState extends State<_EditJournalSheet> {
                 ),
                 const SizedBox(height: 20),
 
-                _sectionLabel('Mood', _moodScore <= 0 ? 'Not logged' : _moodScore.toStringAsFixed(1)),
-                Slider(
-                  value: _moodScore,
-                  min: 0,
-                  max: 10,
-                  divisions: 20,
-                  activeColor: AppTheme.primary,
-                  onChanged: (v) => setState(() => _moodScore = v),
-                ),
-                const SizedBox(height: 8),
-
-                _sectionLabel('Sleep hours', _sleepHours <= 0 ? 'Not logged' : '${_sleepHours.toStringAsFixed(1)}h'),
-                Slider(
-                  value: _sleepHours,
-                  min: 0,
-                  max: 12,
-                  divisions: 24,
-                  activeColor: AppTheme.secondary,
-                  onChanged: (v) => setState(() => _sleepHours = v),
-                ),
-                const SizedBox(height: 12),
-
-                const Text('Sleep quality', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppTheme.onSurface)),
-                const SizedBox(height: 8),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: List.generate(_qualityLevels.length, (i) {
-                    final level = _qualityLevels[i];
-                    final selected = _sleepQuality == level;
-                    return ChoiceChip(
-                      label: Text(_qualityLabels[i]),
-                      selected: selected,
-                      selectedColor: AppTheme.primaryFixed,
-                      onSelected: (_) => setState(() => _sleepQuality = level),
-                    );
-                  }),
-                ),
-                const SizedBox(height: 16),
-
-                SwitchListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: const Text('Had a nightmare', style: TextStyle(fontSize: 14)),
-                  value: _hadNightmare,
-                  onChanged: (v) => setState(() => _hadNightmare = v),
-                ),
-                SwitchListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: const Text('Visible to friends', style: TextStyle(fontSize: 14)),
-                  value: _isShared,
-                  onChanged: (v) => setState(() => _isShared = v),
-                ),
-                const SizedBox(height: 8),
-
-                const Text('Emotions', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppTheme.onSurface)),
-                const SizedBox(height: 8),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: _emotionOptions.map((e) {
-                    final selected = _emotions.contains(e);
-                    return FilterChip(
-                      label: Text(e),
-                      selected: selected,
-                      selectedColor: AppTheme.primaryFixed,
-                      onSelected: (sel) => setState(() => sel ? _emotions.add(e) : _emotions.remove(e)),
-                    );
-                  }).toList(),
-                ),
-                const SizedBox(height: 16),
-
-                const Text('Trigger', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppTheme.onSurface)),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: _triggerCtrl,
-                  decoration: const InputDecoration(
-                    hintText: 'e.g. Work, Exercise',
-                    border: OutlineInputBorder(),
-                    isDense: true,
-                  ),
-                ),
-                const SizedBox(height: 16),
+                _buildLoggedInfo(),
 
                 const Text('Photo', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppTheme.onSurface)),
                 const SizedBox(height: 8),
                 _buildPhotoField(),
-                const SizedBox(height: 16),
+                const SizedBox(height: 20),
 
                 const Text('Notes', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppTheme.onSurface)),
                 const SizedBox(height: 8),
                 TextField(
                   controller: _notesCtrl,
-                  maxLines: 5,
+                  maxLines: 6,
+                  // Bounded so a very long entry plus a near-max-size photo
+                  // can't push the whole log document past Firestore's 1MB
+                  // document limit (the photo alone is already capped, but
+                  // the combined document wasn't).
+                  maxLength: 4000,
                   decoration: const InputDecoration(
                     hintText: 'How was your day?',
                     border: OutlineInputBorder(),
                   ),
+                ),
+                const SizedBox(height: 12),
+
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Visible to friends', style: TextStyle(fontSize: 14)),
+                  subtitle: const Text(
+                    'Share this entry to your friends’ feed',
+                    style: TextStyle(fontSize: 12, color: AppTheme.outline),
+                  ),
+                  value: _isShared,
+                  onChanged: (v) => setState(() => _isShared = v),
                 ),
                 const SizedBox(height: 20),
 
@@ -1062,19 +1091,6 @@ class _EditJournalSheetState extends State<_EditJournalSheet> {
             ),
           ),
         ),
-      ),
-    );
-  }
-
-  Widget _sectionLabel(String title, String value) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 2),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(title, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppTheme.onSurface)),
-          Text(value, style: const TextStyle(fontSize: 13, color: AppTheme.outline)),
-        ],
       ),
     );
   }
@@ -1122,26 +1138,18 @@ class _EditJournalSheetState extends State<_EditJournalSheet> {
       children: [
         ClipRRect(
           borderRadius: BorderRadius.circular(12),
-          child: Image.network(
+          child: storedImage(
             _photoUrl,
-            height: 180,
-            fit: BoxFit.cover,
-            errorBuilder: (context, error, stackTrace) => Container(
+            width: double.infinity,
+            maxHeight: 320,
+            fit: BoxFit.contain,
+            fallback: Container(
               height: 180,
               color: AppTheme.surfaceContainer,
               child: const Center(
                 child: Icon(Icons.broken_image_outlined, color: AppTheme.outlineVariant),
               ),
             ),
-            loadingBuilder: (context, child, progress) => progress == null
-                ? child
-                : Container(
-                    height: 180,
-                    color: AppTheme.surfaceContainerLow,
-                    child: const Center(
-                      child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.primary),
-                    ),
-                  ),
           ),
         ),
         const SizedBox(height: 8),

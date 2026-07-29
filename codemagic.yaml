@@ -87,14 +87,18 @@ workflows:
           zip -qry BetterME-unsigned.ipa Payload
           ls -lh BetterME-unsigned.ipa
 
-    # Artifact paths are relative to the clone root, NOT to working_directory.
+    # Artifact globs are matched relative to `working_directory` (betterme/), so the
+    # bare `build/...` form is the one that should hit. The clone-root-relative form
+    # is listed too because patterns that match nothing are ignored silently -- and a
+    # silently-empty Artifacts tab on a green build is exactly the failure this had.
     artifacts:
+      - build/ios/iphoneos/*.ipa
       - betterme/build/ios/iphoneos/*.ipa
 
     publishing:
       email:
         recipients:
-          - CHANGE_ME@example.com   # <- your email, or delete this publishing block
+          - sylvester.chungjw@gmail.com   # <- your email, or delete this publishing block
         notify:
           success: true
           failure: true

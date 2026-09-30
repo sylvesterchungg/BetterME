@@ -34,6 +34,7 @@ class AIInsightService {
   /// appended a second JSON object, and gemma-4-26b-a4b-it read 80% task
   /// completion back as "0% ... room for improvement". [firstJsonObject] and
   /// the prompt guards were added for Gemma and are kept as cheap insurance.
+  ///   
   static const String _modelName = 'gemini-3.1-flash-lite';
 
   /// Hard ceiling on any single generation. Without it a slow draw is an
@@ -46,10 +47,6 @@ class AIInsightService {
     apiKey: ApiKeys.geminiApiKey,
     generationConfig: GenerationConfig(
       temperature: 0.6,
-      // Gemma is not a thinking model, so the JSON (4 short fields) is all this
-      // budget has to cover. Kept generous anyway: a truncated response is an
-      // unterminated string, and [firstJsonObject] discards those outright
-      // rather than surfacing half an insight. Ceiling is 32768 for this model.
       maxOutputTokens: 8192,
       // Force a strict, parseable JSON shape so the UI never has to guess.
       responseMimeType: 'application/json',

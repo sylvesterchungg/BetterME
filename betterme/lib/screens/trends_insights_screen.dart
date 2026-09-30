@@ -1006,11 +1006,23 @@ class _TrendsInsightsScreenState extends State<TrendsInsightsScreen> {
   }
 
   /// Inline Mood → Productivity direction hint shown inside the productivity card.
+  ///
+  /// FR_405 scopes this to "the last 7 days", so logs are windowed to the same
+  /// 7-day range (today and the 6 days before it) used by _buildInsightVisual,
+  /// rather than correlating over the user's entire log history.
   Widget _buildMoodProdCorrelationRow(
       List<LogEntry> logs, List<ProductivityRecord> records) {
+    final today = DateTime.now();
+    final windowStart = DateTime(today.year, today.month, today.day)
+        .subtract(const Duration(days: 6));
+    final recentLogs = logs.where((l) {
+      final day = DateTime(l.date.year, l.date.month, l.date.day);
+      return !day.isBefore(windowStart);
+    });
+
     final recordMap = {for (final r in records) r.date: r};
     final moodProdX = <double>[], moodProdY = <double>[];
-    for (final log in logs) {
+    for (final log in recentLogs) {
       if (log.moodScore == 0) continue;
       final rec = recordMap[_dayKey(log.date)];
       if (rec == null) continue;

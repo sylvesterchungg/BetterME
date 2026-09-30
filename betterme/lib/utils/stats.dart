@@ -47,7 +47,7 @@ double sleepHoursBetween(int bedHour, int bedMinute, int wakeHour, int wakeMinut
 /// [today] is injectable so the logic can be tested deterministically; it
 /// defaults to `DateTime.now()`. Only the date component of each input is used.
 int computeLogStreak(Iterable<DateTime> logDates, {DateTime? today}) {
-  // Collapse logs to the distinct calendar days they fall on.
+
   final loggedDays = <DateTime>{
     for (final d in logDates) DateTime(d.year, d.month, d.day),
   };
@@ -57,8 +57,6 @@ int computeLogStreak(Iterable<DateTime> logDates, {DateTime? today}) {
   final todayDay = DateTime(now.year, now.month, now.day);
   final yesterday = _previousDay(todayDay);
 
-  // Anchor the streak at today if logged today, otherwise yesterday. If the
-  // newest log is older than yesterday, the streak is already broken.
   DateTime cursor;
   if (loggedDays.contains(todayDay)) {
     cursor = todayDay;
@@ -68,7 +66,6 @@ int computeLogStreak(Iterable<DateTime> logDates, {DateTime? today}) {
     return 0;
   }
 
-  // Walk backwards day by day for as long as each day has a log.
   var streak = 0;
   while (loggedDays.contains(cursor)) {
     streak++;
@@ -77,13 +74,6 @@ int computeLogStreak(Iterable<DateTime> logDates, {DateTime? today}) {
   return streak;
 }
 
-/// Steps back exactly one calendar day. Deliberately NOT
-/// `d.subtract(const Duration(days: 1))` — that does absolute-time (fixed
-/// 24h) arithmetic on a local DateTime, which lands off local midnight when a
-/// DST transition falls between the two days, breaking the exact-midnight
-/// membership checks above. Reconstructing from calendar components instead
-/// (Dart normalizes an out-of-range day, e.g. day 0 rolls into the previous
-/// month) always lands exactly on the target day's local midnight.
 DateTime _previousDay(DateTime d) => DateTime(d.year, d.month, d.day - 1);
 
 /// The wall-clock instant at which the daily logging reminder (FR_905) should
@@ -105,8 +95,6 @@ DateTime? nextLogReminderOccurrence(
   final at = DateTime(now.year, now.month, now.day, minutesFromMidnight ~/ 60,
       minutesFromMidnight % 60);
   if (loggedToday || !at.isAfter(now)) {
-    // Calendar-component arithmetic rather than Duration, for the same
-    // DST-safety reason documented on _previousDay above.
     return DateTime(at.year, at.month, at.day + 1, at.hour, at.minute);
   }
   return at;

@@ -10,6 +10,7 @@ import '../services/ai_insight_service.dart';
 import '../services/notification_service.dart';
 import '../utils/image_helpers.dart';
 import '../utils/stats.dart';
+import '../utils/stream_error_tracker.dart';
 
 class AppProvider with ChangeNotifier {
   final DatabaseService _dbService = DatabaseService();
@@ -81,6 +82,37 @@ class AppProvider with ChangeNotifier {
   // user doc changes often (streak ticks, mood mirror, water intake), so we
   // only tear down and rebuild those two streams when friendsIds truly changes.
   List<String>? _friendsIdsForSubs;
+
+  // Which listeners are currently failing. Without this, a stream error was
+  // only ever debugPrinted: the affected data silently froze at its last value
+  // with nothing in the interface to say so.
+  final StreamErrorTracker _streamErrors = StreamErrorTracker();
+
+  bool get hasStreamError => _streamErrors.hasError;
+  String get streamErrorSummary => _streamErrors.summary;
+  List<String> get failedStreams => _streamErrors.failedStreams;
+
+  /// Records a listener failure. Rebuilds only when the error is new — a
+  /// broken listener re-emits the same error repeatedly.
+  void _onStreamError(String stream, Object error) {
+    debugPrint('[Firestore] $stream stream error: $error');
+    if (_streamErrors.record(stream, error)) notifyListeners();
+  }
+
+  /// Marks [stream] healthy after a successful emission. Deliberately does not
+  /// notify on its own — every caller already calls notifyListeners() with the
+  /// new data, and clearing is a no-op on a healthy stream anyway.
+  void _onStreamData(String stream) => _streamErrors.clear(stream);
+
+  /// Re-subscribes every listener after a failure. Safe at any time —
+  /// [_initUserListeners] cancels the existing subscriptions first.
+  void retryStreams() {
+    final userId = currentUser?.id ?? _auth.currentUser?.uid;
+    if (userId == null) return;
+    _streamErrors.clearAll();
+    notifyListeners();
+    _initUserListeners(userId);
+  }
 
 
   AppProvider() {
@@ -191,6 +223,7 @@ class AppProvider with ChangeNotifier {
 
     // 1. Listen to User Profile changes
     _userSub = _dbService.streamUserProfile(userId).listen((user) {
+      _onStreamData('profile');
       currentUser = user;
 
       // Only (re)build the friends streams when friendsIds actually changed —
@@ -201,47 +234,52 @@ class AppProvider with ChangeNotifier {
 
         _friendsSub?.cancel();
         _friendsSub = _dbService.streamFriends(user.friendsIds).listen((friendList) {
+          _onStreamData('friends');
           friends = friendList;
           notifyListeners();
-        }, onError: (e) => debugPrint('[Firestore] friends stream error: $e'));
+        }, onError: (e) => _onStreamError('friends', e));
 
         _friendsLogsSub?.cancel();
         _friendsLogsSub = _dbService.streamFriendsSharedLogs(user.friendsIds).listen((sharedLogs) {
+          _onStreamData('friend activity');
           friendsSharedLogs = sharedLogs;
           notifyListeners();
-        }, onError: (e) => debugPrint('[Firestore] friends shared logs stream error: $e'));
+        }, onError: (e) => _onStreamError('friend activity', e));
       }
       notifyListeners();
-    }, onError: (e) => debugPrint('[Firestore] user profile stream error: $e'));
+    }, onError: (e) => _onStreamError('profile', e));
 
     // 2. Listen to User's Tasks — save a productivity snapshot (scoped to today's
     // due tasks, see _saveProductivityRecord) on every emission including the
     // initial load, so today has an up-to-date record as soon as anything about
     // the task list changes.
     _tasksSub = _dbService.streamTasks(userId).listen((newTasks) {
+      _onStreamData('tasks');
       tasks = newTasks;
       _saveProductivityRecord(userId);
       notifyListeners();
       _checkAndHandleOverdueTasks();
-    }, onError: (e) => debugPrint('[Firestore] tasks stream error: $e'));
+    }, onError: (e) => _onStreamError('tasks', e));
 
     _taskCategoriesSub = _dbService.streamTaskCategories(userId).listen((newCategories) {
+      _onStreamData('categories');
       taskCategories = newCategories;
       notifyListeners();
-    }, onError: (e) => debugPrint('[Firestore] taskCategories stream error: $e'));
+    }, onError: (e) => _onStreamError('categories', e));
 
     // 3. Listen to User's Logs (Sleep, Mood, Notes, Triggers)
     //    The daily-log streak is derived purely from these dates, so recompute
     //    it on every emission (including the initial load — this is what resets
     //    a broken streak to 0 when the app is reopened after a missed day).
     _logsSub = _dbService.streamLogEntries(userId).listen((newLogs) {
+      _onStreamData('logs');
       logs = newLogs;
       notifyListeners();
       checkAndUpdateStreak();
       // Re-arm the daily logging reminder against the new log set, so logging
       // today immediately pushes tonight's nudge out to tomorrow (FR_905).
       _syncLogReminder();
-    }, onError: (e) => debugPrint('[Firestore] logs stream error: $e'));
+    }, onError: (e) => _onStreamError('logs', e));
 
     // 4. Leaderboard is friends-only and derived from `currentUser` + `friends`
     //    (both kept live by the streams above), so no separate query is needed.
@@ -249,28 +287,32 @@ class AppProvider with ChangeNotifier {
     // 4b. Listen to the owner-only private profile (birth date, phone).
     _privateProfileSub =
         _dbService.streamPrivateProfile(userId).listen((profile) {
+      _onStreamData('personal details');
       privateProfile = profile;
       notifyListeners();
-    }, onError: (e) => debugPrint('[Firestore] private profile stream error: $e'));
+    }, onError: (e) => _onStreamError('personal details', e));
 
     // 5. Listen to Productivity Records
     _productivitySub = _dbService.streamProductivityRecords(userId).listen((records) {
+      _onStreamData('productivity');
       productivityRecords = records;
       notifyListeners();
-    }, onError: (e) => debugPrint('[Firestore] productivity stream error: $e'));
+    }, onError: (e) => _onStreamError('productivity', e));
 
     // 6. Listen to Incoming Friend Requests (FR_601 / FR_602)
     _requestsSub = _dbService.streamIncomingRequests(userId).listen((requests) {
+      _onStreamData('friend requests');
       incomingRequests = requests;
       notifyListeners();
-    }, onError: (e) => debugPrint('[Firestore] incoming requests stream error: $e'));
+    }, onError: (e) => _onStreamError('friend requests', e));
 
     // 7. Listen to In-App Notifications (FR_904)
     _notificationsSub =
         _dbService.streamNotifications(userId).listen((notifList) {
+      _onStreamData('notifications');
       notifications = notifList;
       notifyListeners();
-    }, onError: (e) => debugPrint('[Firestore] notifications stream error: $e'));
+    }, onError: (e) => _onStreamError('notifications', e));
 
     // 8. Load any cached AI insight + coping tips once (client-side cache;
     //    regenerated on demand by the Trends screen when recent data changes).
@@ -401,6 +443,8 @@ class AppProvider with ChangeNotifier {
     _privateProfileSub?.cancel();
     // Force the friends streams to rebuild on the next login/user switch.
     _friendsIdsForSubs = null;
+    // Don't carry the previous session's failures into the next one.
+    _streamErrors.clearAll();
   }
 
   // Detect incomplete tasks past their due date; reset the task streak if found.

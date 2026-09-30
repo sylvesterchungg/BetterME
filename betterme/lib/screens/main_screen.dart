@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/app_provider.dart';
 import '../theme.dart';
+import '../widgets/stream_error_banner.dart';
 import 'dashboard_tab.dart';
 import 'daily_log_tab.dart';
 import 'health_tasks_tab.dart';
@@ -46,6 +47,7 @@ class _MainScreenState extends State<MainScreen> {
       body: Stack(children: [
         IndexedStack(index: _currentIndex, children: _tabs),
         const _AiConsentGate(),
+        const _StreamErrorBanner(),
       ]),
       bottomNavigationBar: Container(
         decoration: const BoxDecoration(
@@ -84,6 +86,25 @@ class _MainScreenState extends State<MainScreen> {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// Tells the user when a background listener has failed, so stale data is
+/// never presented as current. Like [_AiConsentGate], this watches
+/// AppProvider on its own so MainScreen's Scaffold stays out of the rebuild
+/// path; it renders nothing at all while every stream is healthy.
+class _StreamErrorBanner extends StatelessWidget {
+  const _StreamErrorBanner();
+
+  @override
+  Widget build(BuildContext context) {
+    final provider = context.watch<AppProvider>();
+    if (!provider.hasStreamError) return const SizedBox.shrink();
+
+    return StreamErrorBanner(
+      summary: provider.streamErrorSummary,
+      onRetry: provider.retryStreams,
     );
   }
 }
